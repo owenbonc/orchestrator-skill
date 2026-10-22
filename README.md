@@ -6,6 +6,27 @@ My default workflow for agentic coding projects, as a Claude Code skill. The `or
 
 The skill sizes each request first, then picks a track:
 
+```mermaid
+flowchart TD
+    R[Request] --> S{Size it}
+    S -->|quick edit or question| D[Just do it]
+    S -->|one theme| C[Change track]
+    S -->|bug| B[Bug track]
+    S -->|several changes| Q[Queue: one session per change]
+    S -->|new project or phase| P[Phases 0-6]
+    Q --> C
+    Q --> B
+    P --> G[Grill until SPEC.md is agreed]
+    G --> F[Foundation: repo, CI, contracts]
+    F --> A[Parallel agents in worktrees]
+    A --> V
+    C --> V
+    B --> V
+    V[verify.sh prints READY, then deslop] --> RV[Combined review: Comment Sicko and ponytail-review]
+    RV --> PR[PR with filled Review section]
+    PR --> M[merge-gate once CI is green]
+```
+
 | Request | Track |
 |---|---|
 | Quick edit or question | Just do it |
