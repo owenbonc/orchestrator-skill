@@ -22,8 +22,10 @@ flowchart TD
     A --> V
     C --> V
     B --> V
-    V[verify.sh prints READY, then deslop] --> RV[Combined review: Comment Sicko and ponytail-review]
-    RV --> PR[PR with filled Review section]
+    V[verify.sh prints READY, then deslop] --> BL[Blind review of comment-stripped code]
+    BL --> RV[Comment Sicko and ponytail-review on the real diff]
+    RV --> MU[Mutation check of the safety guards]
+    MU --> PR[PR with filled Review section]
     PR --> M[merge-gate once CI is green]
 ```
 
@@ -45,7 +47,9 @@ The phases (`phases.md`):
 5. Independent review of the whole phase against the spec
 6. Ship
 
-Every PR gets a combined review (Comment Sicko plus `ponytail-review`), a filled `## Review` section, and merges only through `scripts/merge-gate.mjs` once CI is green. Long builds hand over through a resume note and continue in a fresh session per part.
+Every PR gets a combined review: a blind first pass on a comment-stripped copy of the changed code (`templates/strip-comments.mjs`), so no comment, commit message or builder report anchors the reviewer; then Comment Sicko and `ponytail-review` on the real diff; then a mutation check that breaks each safety guard in turn, where a break no test catches gets its test before merge. The PR fills its `## Review` section and merges only through `scripts/merge-gate.mjs` once CI is green. Long builds hand over through a resume note and continue in a fresh session per stage.
+
+Each agent's model follows its task, not its role: Opus for code a non-negotiable rule guards or a design not yet settled, Sonnet for settled work that needs judgment, Haiku for work that needs none. Every choice is logged with its tokens, moves up a model on one failure and down only on a record of clean parts. None of this bends the quality gates: an agreed SPEC, `verify.sh` READY, the real thing exercised, the blind review and mutation check, and merges through the gate.
 
 ## Layout
 
@@ -54,8 +58,9 @@ orchestrated-build/
   SKILL.md       sizing, tracks, review and merge rules, pausing and picking up
   phases.md      Phases 0–6 and adopting an existing repo
   templates/     files copied into a project: AGENTS.md, ci.yml, verify.sh,
-                 merge-gate.mjs, guard-main-checkout.mjs, agent-setup.sh,
-                 agent and review briefs, hand-over note, module map
+                 merge-gate.mjs, guard-main-checkout.mjs (each with its test),
+                 agent-setup.sh, agent and review briefs, hand-over note, module map;
+                 and strip-comments.mjs, which makes the blind review's copy
 ```
 
 ## Install

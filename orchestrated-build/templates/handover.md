@@ -17,12 +17,19 @@ Read this, then every file it names. Its decisions are settled; its "done" claim
 
 If an agent stopped before finishing: read its report and its worktree's `git log`/`git status`, then start a fresh agent in that worktree with the brief plus "already done: …".
 
+## Agent log
+| Agent | Task | Model, effort | Condition that chose them | Tokens | Produced | Review findings, fix rounds after |
+|---|---|---|---|---|---|---|
+| | | | | | | |
+
 ## Owner decisions since the spec was agreed
 - <decision, in the owner's words where they matter>, written into SPEC? yes/no.
 - Open questions waiting on the owner: <numbered, with the recommendation>.
 
 ## Next, in order
 1. …
+
+Point the next session only at examples you have opened ("do it as PR #n did"): it follows the pointer instead of the rule.
 
 ## Known follow-ups
 - …

@@ -15,9 +15,10 @@ export function problems(pr) {
     const line = new RegExp(`^- ${step}:[ \\t]*(\\S.*)$`, 'm').exec(review);
     if (!line) found.push(`"## Review" has no filled "- ${step}:" line`);
   }
-  const checks = pr.statusCheckRollup ?? [];
-  if (checks.length === 0) found.push('no CI check ran on the head commit');
-  for (const check of checks) {
+  // A skipped job (one that only runs on pushes to main, say) didn't run, so it neither passes nor blocks.
+  const ran = (pr.statusCheckRollup ?? []).filter((check) => check.conclusion !== 'SKIPPED');
+  if (ran.length === 0) found.push('no CI check ran on the head commit');
+  for (const check of ran) {
     const result = check.conclusion ?? check.state;
     if (result !== 'SUCCESS') found.push(`CI "${check.name ?? check.context}" is ${String(result).toLowerCase()}`);
   }
