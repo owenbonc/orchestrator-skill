@@ -117,10 +117,10 @@ Name the log entries behind each change. Changes to this skill go to `owenbonc/o
 Long builds outlive one session's usage or context, so treat a hand-over as routine.
 
 - **Keep a resume note current** (`templates/handover.md`) in the scratchpad or the shared notes folder, updated at each milestone: an agent launched or reported, a PR merged, an owner decision. An abrupt stop then loses minutes, not the plan.
-- **Hand over at stage boundaries.** An orchestrator session covers one stage of a part: **Decide** (grilling, SPEC, briefs), **Build** (launching builders and merging their branches) or **Ship** (review, fixes, PR, merge). It hands over at the end of its stage, and before that at the next milestone once its context passes 40% (check it with `get_usage` at each resume-note update), because a long session re-reads its whole history on every turn, which costs more of the owner's plan than the work does, and works worse at length. Two conditions keep quality first:
+- **Hand over at stage boundaries.** An orchestrator session covers one stage of a part: **Decide** (grilling, SPEC, briefs), **Build** (launching builders and merging their branches) or **Ship** (review, fixes, PR, merge). It hands over at the end of its stage, and before that at the next milestone once its context passes 50% (check it with `get_usage` at each resume-note update), because a long session re-reads its whole history on every turn, which costs more of the owner's plan than the work does, and works worse at length. Two conditions keep quality first:
   - **The note test.** Hand over only when a fresh session could carry on from the note and SPEC alone. When the next step depends on what the note can't hold (a bug half-diagnosed, a design discussion with the owner under way, a question being asked), finish that step, write its result down, then hand over.
   - **The ceiling.** At 70% context, hand over at once, finishing or backing out of the current step as in Pause safely.
-  - **When the app can't open a session** (Remote Control shows no card), ask the owner in one line to start one before launching builders; never launch them from a session past 40%.
+  - **When the app can't open a session** (Remote Control shows no card), ask the owner in one line to start one before launching builders; never launch them from a session past 50%.
 
   The next stage starts in a new session from the note, never in the same conversation.
 - **Pause safely** before the limit, not at it, when usage or context runs low or the owner says to stop soon:
