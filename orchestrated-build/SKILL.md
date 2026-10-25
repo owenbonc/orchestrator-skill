@@ -29,25 +29,51 @@ They're installed globally: plugins in `~/.claude/settings.json`, user skills in
 | All code | `ponytail` (full); pstack's `poteto-mode` principles: `typescript-best-practices`, `tdd`, `principle-model-the-domain`, `principle-boundary-discipline`, `principle-type-system-discipline`, `principle-make-operations-idempotent`, `principle-test-behavior-not-implementation`, `principle-prove-it-works`. Apply the principles; skip Cursor-only orchestration. |
 | All UI | `impeccable` (PRODUCT.md, DESIGN.md, craft floor, audit, critique) plus Emil Kowalski's `emil-design-eng`, `pick-ui-library`, `review-animations`, `animate`, `break-ui`. The owner's visual brief is pinned; impeccable's "the brief wins" applies. |
 | Bugs | `diagnosing-bugs`, then `tdd` |
-| Review | `thermo-nuclear-code-quality-review`, `ponytail-review` and a spec-conformance pass; `templates/comment-sicko.md` on each PR and `templates/deslop.md` as the last step of each change (bundled copies of pstack's Comment Sicko and cursor-team-kit's deslop, so they work without those plugins); for UI, impeccable `audit`/`critique`, `review-animations`, `break-ui`. |
+| Review | a blind first pass on comment-stripped code (`templates/strip-comments.mjs`), then `thermo-nuclear-code-quality-review`, `ponytail-review` and a spec-conformance pass, and a mutation check of the safety guards; `templates/comment-sicko.md` on each PR and `templates/deslop.md` as the last step of each change (bundled copies of pstack's Comment Sicko and cursor-team-kit's deslop, so they work without those plugins); for UI, impeccable `audit`/`critique`, `review-animations`, `break-ui`. |
 | Claude API code | `claude-api`: never guess SDK shapes or model ids |
 
 Briefs always name the essential skills: `ponytail` (full), the pstack principles, `tdd` for logic, `diagnosing-bugs` for bugs. They name the specialist skills (`impeccable` and the Emil Kowalski UI set, `break-ui`, `review-animations`, `claude-api`) only when the task needs them: UI work, Claude API code.
 
+## Quality gates
+
+These never bend for tokens or time. Every efficiency rule below (models, reading, splitting builders, hand-overs, the retro) moves only inside them, and where its condition is unclear it takes the quality side.
+
+- SPEC agreed, and every behaviour change written into SPEC, before the code.
+- `scripts/verify.sh` prints READY.
+- The real thing exercised: the running app, the built artifact on a fixture, and once for real each thing its test harness emulates.
+- The combined review's blind pass, and the mutation check on safety-critical pieces (Review and merge).
+- You read safety-critical diffs yourself.
+- Merges only through the merge gate.
+
 ## Token budget
 
 - **Connectors.** At the start of a coding session, turn off the connectors the work won't use (Gmail, the design plugin's servers, Figma, Chrome) with the ccd_connectors tools: their tools cost tokens on every turn and in every subagent.
-- **Models.** Opus for the orchestrator (which writes the hand-over notes) and safety reviews, Sonnet (`model: "sonnet"`) for builders and the other PR reviews, Haiku (`model: "haiku"`) for mechanical steps: opening PRs, merging, CI checks, reading logs.
-- **Effort.** Builders on mechanical tasks (renames, wiring, docs) run at `effort: "medium"`.
+- **Choose each agent's model from its task, not its role**: the cheapest model that can do this task right, judged by what a miss would cost. Decide it, and its effort, when you write the brief, and name the condition that decided it in the agent log.
+
+  | Model | When any of these holds |
+  |---|---|
+  | **Opus** | It writes, fixes or reviews code a SPEC non-negotiable rule guards (approval and press gates, run state, credentials, writes to the owner's systems or accounts). The design isn't settled in its brief: new contracts or architecture, a cross-module change, a platform API nobody has tried here. It redoes work that already failed on a cheaper model (a review blocker in its code, a fix round that left gaps, a builder that couldn't finish). It is the orchestrator. |
+  | **Sonnet** (`model: "sonnet"`) | None of the above, and it needs judgment: UI, wiring, routes, tests, docs, a large change whose design the brief settles and whose tests prove it, reviews of anything not safety-critical, mechanical fixes. |
+  | **Haiku** (`model: "haiku"`) | It needs no judgment: opening PRs, merging, CI checks, reading logs, a rename the tests prove. |
+
+  - **Effort** follows the same reading: `medium` for settled, mechanical work; the default for the rest; `high` for Opus on an unsettled safety-critical design.
+  - **Split to keep Opus small.** A piece with an Opus-worthy core and a large settled bulk is split, so only the core runs on Opus.
+  - **Escalate on evidence, never mid-run.** Start each piece at the lowest model these rules allow; a failure moves its next round up one model. Never switch a running agent: it throws away its work.
+- **Read what you vouch for; delegate what you only need a fact from.** Read yourself the SPEC text you rewrite, the options you show the owner, safety-critical diffs and the review findings you accept or reject. A fact you only need (where something is defined, what a page's markup holds, whether a route exists) comes from a read-only subagent (`Explore`), and builders get file paths, never your reading of the files.
+- **Size each builder before launching it.** Its brief names the exact files to read and to change. When it reaches into more than about two subsystems, or its reading alone would take a large share of its ~250k-token budget, split it at a contract both halves can test on their own (each against a fake of the other side), committing the contract first as their shared base. When correctness depends on one mind holding the whole piece (a state machine and its gate), don't split it: give it one Opus builder with a staged brief (the contract first, then the implementation in commits) and the progress report at the context line.
+- **Log the spend.** Each agent's model, effort, the condition that chose them, and its tokens (the `subagent_tokens` its completion notice reports) go in the resume note's agent log when it finishes, with what it produced and how many review findings and fix rounds followed.
 
 ## Review and merge
 
 Every PR, an agent's into a phase branch or a day-to-day one into main:
 
-- **Combined review.** One fresh subagent runs Comment Sicko (`templates/comment-sicko.md`, the diff, and the project's extra keeps below) and `ponytail-review`: on Opus for safety-critical pieces (anything a SPEC non-negotiable rule guards, plus credentials and writes to the owner's systems or accounts), on Sonnet otherwise.
+- **Combined review, blind pass first.** One fresh subagent, on Opus for safety-critical pieces (anything a SPEC non-negotiable rule guards, plus credentials and writes to the owner's systems or accounts), on Sonnet otherwise. A comment, commit message or report that says what the code does anchors a reviewer on the claim, so it reviews in two passes:
+  1. **Blind.** Run `node ~/.claude/skills/orchestrated-build/templates/strip-comments.mjs <base> <dir>` in the branch's worktree and give the reviewer that comment-stripped copy of every changed file, SPEC's rules and the contracts, and nothing else: no builder report, brief, commit messages, PR body or your own conclusions. It reads the connected code it needs from the stripped copy or the repo's unchanged files, and writes its correctness and safety findings (by file and symbol, since the copy's line numbers differ) before it opens the real diff.
+  2. **Commented.** Comment Sicko (`templates/comment-sicko.md`, the diff, and the project's extra keeps below) and `ponytail-review` on the real diff, checking every comment's claim against what pass 1 found, then pass 1's findings mapped to real file:line.
+- **Mutation check** on safety-critical pieces, by the same reviewer after pass 2: for each guard a SPEC non-negotiable rule depends on, break it in the branch's worktree (invert the condition, return early, drop the call), run that guard's tests, and restore the file with `git checkout -- <file>`; it ends with a clean `git status` and commits nothing. A break no test catches is a finding: the missing test is written before merge. The report lists each guard (file:line), the break, and the test that caught it.
 - **Judge each Comment Sicko finding yourself.** A comment that admits a workaround gets its root cause fixed, or its constraint encoded as a type, test or lint. Keep SPEC section references (`SPEC §5.5`), safety-rule anchors and ponytail's `shortcut:` comments.
-- **Fixes** on an agent's PR go back to its builder via SendMessage only when the findings are local and mechanical and its context is under ~200k tokens; otherwise brief a fresh fix agent on top of `common.md`. On your own change, fix them yourself. Read safety-critical diffs yourself either way.
-- **The PR body's `## Review` section** fills one line each: `- deslop:` (from the builder's report or your own pass), `- no-comments:` and `- ponytail-review:` (from the combined review).
+- **Fixes** on an agent's PR go back to its builder via SendMessage only when the findings are local and mechanical and its context is under ~200k tokens; otherwise brief a fresh fix agent on top of `common.md`, its model chosen by the rules in Token budget: Opus when any finding it fixes is safety-critical or a fix round on the same piece already left gaps, Sonnet when every finding is mechanical (comment deletions, lint, renames, moves). A round with both splits only if the files are disjoint; otherwise it runs on Opus. On your own change, fix them yourself. Read safety-critical diffs yourself either way.
+- **The PR body's `## Review` section** fills one line each: `- deslop:` (from the builder's report or your own pass), `- no-comments:` and `- ponytail-review:` (from the combined review; the ponytail-review line names the blind pass's findings and the mutation check's result).
 - **Merge** only with `node scripts/merge-gate.mjs <pr> <owner/repo>` once CI is green, never `gh pr merge` directly.
 
 ## Day-to-day work
@@ -59,7 +85,7 @@ After the first phase, most work is a stream of single-theme changes. Each gets 
 1. Restate the change in a line or two. Ask only the questions whose answers change what you build, each with your recommended answer; when there are none, say so and start.
 2. Work in a worktree on its own branch, starting with `scripts/agent-setup.sh origin/main`, never in the main checkout.
 3. Update SPEC.md first when behaviour changes.
-4. Settle visual changes before code: show two or three options side by side (an Artifact, a scratch route or screenshots), let Owen pick, then build the pick. The PR body carries before and after screenshots.
+4. Settle visual changes before code: show two or three options side by side (an Artifact, a scratch route or screenshots), let Owen pick, then build the pick, checking it against the option he picked rather than against a description of it. The PR body carries before and after screenshots; in a private repo, push them to an orphan `pr-shots/<branch>` branch (`git hash-object -w`, `mktree`, `commit-tree`, so no checkout moves) and embed them by that commit's SHA.
 5. Test the risky logic, then exercise the real thing.
 6. Once `scripts/verify.sh` prints READY, follow `templates/deslop.md` on your diff against main, then run the combined review. Fix what holds up and fill the PR's `## Review` lines.
 7. Open the PR and offer Auto-fix; merge through the gate once CI is green.
@@ -80,12 +106,22 @@ After the first phase, most work is a stream of single-theme changes. Each gets 
 
 After each merge, ask: did anything in this change cost time that a script, hook, lint, test, AGENTS.md line or memory would have saved? If so, make it, as its own PR, or with Owen's OK when it lives outside the repo. (This is `phases.md` Phase 2's "same instruction twice" rule, applied at every merge.)
 
+At the end of each part, also read the agent log (Token budget) and change the model, split and hand-over conditions only on its evidence, asymmetrically, so savings never cost quality:
+- **Up on one failure.** A blocker in an agent's code, a fix round that left gaps, or a builder that couldn't finish moves that kind of task up a model or to a finer split.
+- **Down only on a record.** A cheaper model, a coarser split or a later hand-over only after two or more parts at that level reviewed clean: no blockers and at most one fix round.
+
+Name the log entries behind each change. Changes to this skill go to `owenbonc/orchestrator-skill` as a PR.
+
 ## Pausing and picking up
 
 Long builds outlive one session's usage or context, so treat a hand-over as routine.
 
 - **Keep a resume note current** (`templates/handover.md`) in the scratchpad or the shared notes folder, updated at each milestone: an agent launched or reported, a PR merged, an owner decision. An abrupt stop then loses minutes, not the plan.
-- **A fresh session per part.** After each part ships (its PR merged, the resume note current), the next part starts in a new session from the note, never in the same conversation: a long session re-reads its whole history on every turn, which costs more of the owner's plan than the work does.
+- **Hand over at stage boundaries.** An orchestrator session covers one stage of a part: **Decide** (grilling, SPEC, briefs), **Build** (launching builders and merging their branches) or **Ship** (review, fixes, PR, merge). It hands over at the end of its stage, and before that at the next milestone once its context passes 40% (check it with `get_usage` at each resume-note update), because a long session re-reads its whole history on every turn, which costs more of the owner's plan than the work does, and works worse at length. Two conditions keep quality first:
+  - **The note test.** Hand over only when a fresh session could carry on from the note and SPEC alone. When the next step depends on what the note can't hold (a bug half-diagnosed, a design discussion with the owner under way, a question being asked), finish that step, write its result down, then hand over.
+  - **The ceiling.** At 70% context, hand over at once, finishing or backing out of the current step as in Pause safely.
+
+  The next stage starts in a new session from the note, never in the same conversation.
 - **Pause safely** before the limit, not at it, when usage or context runs low or the owner says to stop soon:
   1. Finish the current step or back out of it, and start nothing new.
   2. Ask each running agent to commit its finished work and write a progress section into its report (done, in progress with what's left, not started).

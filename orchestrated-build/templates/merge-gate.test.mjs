@@ -52,6 +52,23 @@ describe('merge gate', () => {
     expect(problems(pr({ statusCheckRollup: [] }))).toEqual(['no CI check ran on the head commit']);
   });
 
+  it('lets skipped checks through but still refuses failing or pending ones beside them', () => {
+    const skipped = { name: 'smoke', conclusion: 'SKIPPED' };
+    expect(problems(pr({ statusCheckRollup: [{ name: 'check', conclusion: 'SUCCESS' }, skipped] }))).toEqual([]);
+    expect(problems(pr({ statusCheckRollup: [{ name: 'check', conclusion: 'FAILURE' }, skipped] }))).toEqual([
+      'CI "check" is failure',
+    ]);
+    expect(problems(pr({ statusCheckRollup: [{ name: 'check', conclusion: null, state: 'PENDING' }, skipped] }))).toEqual([
+      'CI "check" is pending',
+    ]);
+  });
+
+  it('refuses a PR whose only checks were skipped, since nothing ran', () => {
+    expect(problems(pr({ statusCheckRollup: [{ name: 'smoke', conclusion: 'SKIPPED' }] }))).toEqual([
+      'no CI check ran on the head commit',
+    ]);
+  });
+
   it('refuses drafts and closed PRs', () => {
     expect(problems(pr({ isDraft: true }))).toEqual(['the PR is a draft']);
     expect(problems(pr({ state: 'MERGED' }))).toEqual(['the PR is merged']);
