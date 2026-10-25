@@ -21,7 +21,7 @@ const byName = new RegExp(`${commandStart}\\s*${prefixArgs}(?:\\S*/)?(?:pkill|ki
 const command = input.tool_name === 'Bash' ? (args.command ?? '') : '';
 if (byName.test(command) || (/\bpgrep\b/i.test(command) && /\bkill\b/i.test(command))) {
   process.stderr.write(
-    "Stop only what you started, by its port: `lsof -ti tcp:<port> | xargs kill`. pkill, killall and pgrep with kill can stop the owner's live app.\n",
+    "Stop only what you started, by the port it listens on: `lsof -ti tcp:<port> -sTCP:LISTEN | xargs kill`. pkill, killall and pgrep with kill can stop the owner's live app.\n",
   );
   process.exit(2);
 }
