@@ -59,7 +59,7 @@ describe('main-checkout guard', () => {
       expect(bash(byName, worktree), byName).toBe(2);
     }
     for (const allowed of [
-      'lsof -ti tcp:3135 | xargs kill',
+      'lsof -ti tcp:3135 -sTCP:LISTEN | xargs kill',
       'grep -rn pkill scripts',
       'pgrep -f next-server',
       'git commit -m "The guard refuses pkill and killall"',
