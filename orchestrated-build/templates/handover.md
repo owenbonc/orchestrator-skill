@@ -11,11 +11,16 @@ Read this, then every file it names. Its decisions are settled; its "done" claim
 - Migrations: <list>.
 
 ## In flight
-| Work | Worktree | Branch | Brief / report | Last commit, uncommitted files |
-|---|---|---|---|---|
-| | | | | |
+| Work | Worktree | Branch | Brief | Report file (a builder still running writes here) | Last commit, uncommitted files |
+|---|---|---|---|---|---|
+| | | | | | |
 
-If an agent stopped before finishing: read its report and its worktree's `git log`/`git status`, then start a fresh agent in that worktree with the brief plus "already done: …".
+A builder's report as a message reaches only the session that launched it, so hand over while one runs only when its row names the file its brief told it to write. If an agent stopped before finishing: read its report and its worktree's `git log`/`git status`, then start a fresh agent in that worktree with the brief plus "already done: …".
+
+## Step in progress
+Only when handing over mid-step (the 70% ceiling): what is known, so backing out loses nothing.
+- A bug: the repro, the hypotheses ruled out, the current suspect.
+- A design discussion: the options on the table and where Owen was leaning.
 
 ## Agent log
 | Agent | Task | Model, effort | Condition that chose them | Tokens | Produced | Review findings, fix rounds after |
