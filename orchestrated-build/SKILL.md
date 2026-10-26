@@ -36,14 +36,29 @@ Briefs always name the essential skills: `ponytail` (full), the pstack principle
 
 ## Quality gates
 
-These never bend for tokens or time. Every efficiency rule below (models, reading, splitting builders, hand-overs, the retro) moves only inside them, and where its condition is unclear it takes the quality side.
+These never bend for tokens or time. Every efficiency rule below (models, reading, splitting builders, hand-overs, the retro) moves only inside them, and where its condition is unclear it takes the side the priority names (below), the quality side always on safety-critical work.
 
 - SPEC agreed, and every behaviour change written into SPEC, before the code.
 - `scripts/verify.sh` prints READY.
 - The real thing exercised: the running app, the built artifact on a fixture, and once for real each thing its test harness emulates.
-- The combined review's blind pass, and the mutation check on safety-critical pieces (Review and merge).
+- The combined review's blind pass (in tokens first, on safety-critical pieces only), and the mutation check on safety-critical pieces (Review and merge).
 - You read safety-critical diffs yourself.
 - Merges only through the merge gate.
+
+## Priority: quality first or tokens first
+
+Owen sets it per request ("quality first", "tokens first") or per project with a `Priority:` line in its AGENTS.md; with neither it is **quality first**. Record it in the resume note so a hand-over keeps it, and name it in each brief. It turns only these dials; the quality gates hold in both, because a cheap build that ships a safety bug saves nothing.
+
+| Dial | Quality first | Tokens first |
+|---|---|---|
+| A model choice whose condition is unclear (Token budget) | the stronger model | the cheaper one, except on safety-critical work |
+| Effort | `medium` for settled, mechanical work; the default otherwise; `high` for Opus on an unsettled safety-critical design | `medium` for all settled work; the default otherwise |
+| Builders | parallel where files are disjoint; a fresh fix agent unless the findings are local and mechanical | fewer, run in sequence where their reading overlaps; a builder takes its own fixes while under 50% context, unless one is safety-critical |
+| Review of a PR with no safety-critical code | blind pass, then Comment Sicko and `ponytail-review` | one Sonnet pass on the real diff: Comment Sicko and `ponytail-review`, no blind pass (Owen, 26 October 2026) |
+| UI polish | impeccable `audit` and `critique`, `review-animations`, `break-ui` | impeccable `audit` |
+| End-to-end suite | the full suite each round | the sections a change touches each round, the full suite once before the PR |
+
+Safety-critical work (anything a SPEC non-negotiable rule guards, plus credentials and writes to the owner's systems or accounts) gets the same models, review and mutation check in both, and the retro's asymmetry holds in both.
 
 ## Token budget
 
@@ -67,7 +82,7 @@ These never bend for tokens or time. Every efficiency rule below (models, readin
 
 Every PR, an agent's into a phase branch or a day-to-day one into main:
 
-- **Combined review, blind pass first.** One fresh subagent, on Opus for safety-critical pieces (anything a SPEC non-negotiable rule guards, plus credentials and writes to the owner's systems or accounts), on Sonnet otherwise. A comment, commit message or report that says what the code does anchors a reviewer on the claim, so it reviews in two passes:
+- **Combined review, blind pass first.** One fresh subagent, on Opus for safety-critical pieces (anything a SPEC non-negotiable rule guards, plus credentials and writes to the owner's systems or accounts), on Sonnet otherwise. A comment, commit message or report that says what the code does anchors a reviewer on the claim, so it reviews in two passes (in tokens first, a PR with no safety-critical code skips pass 1: one Sonnet reviewer runs pass 2 on the real diff):
   1. **Blind.** Run `node ~/.claude/skills/orchestrated-build/templates/strip-comments.mjs <base> <dir>` in the branch's worktree and give the reviewer that comment-stripped copy of every changed file, SPEC's rules and the contracts, and nothing else: no builder report, brief, commit messages, PR body or your own conclusions. It reads the connected code it needs from the stripped copy or the repo's unchanged files, and writes its correctness and safety findings (by file and symbol, since the copy's line numbers differ) before it opens the real diff.
   2. **Commented.** Comment Sicko (`templates/comment-sicko.md`, the diff, and the project's extra keeps below) and `ponytail-review` on the real diff, checking every comment's claim against what pass 1 found, then pass 1's findings mapped to real file:line.
 - **Mutation check** on safety-critical pieces, by the same reviewer after pass 2: for each guard a SPEC non-negotiable rule depends on, break it in the branch's worktree (invert the condition, return early, drop the call), run that guard's tests, and restore the file with `git checkout -- <file>`; it ends with a clean `git status` and commits nothing. A break no test catches is a finding: the missing test is written before merge. The report lists each guard (file:line), the break, and the test that caught it.
