@@ -14,7 +14,7 @@ Read when `SKILL.md` sizes the request as a new project, a new phase, or several
 - Cover: who it's for, scope and what's out, architecture and stack, where data lives, integrations and their auth, safety rules, cost limits, UI direction, phasing ("barebones first" means define Phase 1 tightly), and how success is checked.
 - When a new fact changes a recommendation mid-round (an agent's research, an owner's aside), say so plainly and re-ask that question.
 - Write `SPEC.md`: purpose, non-negotiable rules, architecture, data ownership, every module's behaviour, API contracts, the data model, the UI direction, **numbered acceptance criteria per phase**, and later phases specified briefly. Write `AGENTS.md` (from `templates/AGENTS.md`) and a `CLAUDE.md` containing `@AGENTS.md`.
-- Show the spec, and build only after the owner confirms it. Later owner requests go into the spec first, then into the code.
+- Before writing it out, show the owner the behaviour in a short summary and settle his refinements there, so SPEC is written once. Show the spec, and build only after the owner confirms it. Later owner requests go into the spec first, then into the code.
 
 ## Phase 2: Set up the repo
 
