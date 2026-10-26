@@ -56,9 +56,8 @@ Owen sets it per request ("quality first", "tokens first") or per project with a
 | Builders | parallel where files are disjoint; a fresh fix agent unless the findings are local and mechanical | fewer, run in sequence where their reading overlaps; a builder takes its own fixes while under 50% context, unless one is safety-critical |
 | Review of a PR with no safety-critical code | blind pass, then Comment Sicko and `ponytail-review` | one Sonnet pass on the real diff: Comment Sicko and `ponytail-review`, no blind pass (Owen, 26 October 2026) |
 | UI polish | impeccable `audit` and `critique`, `review-animations`, `break-ui` | impeccable `audit` |
-| End-to-end suite | the full suite each round | the sections a change touches each round, the full suite once before the PR |
 
-Safety-critical work (anything a SPEC non-negotiable rule guards, plus credentials and writes to the owner's systems or accounts) gets the same models, review and mutation check in both, and the retro's asymmetry holds in both.
+Safety-critical work (anything a SPEC non-negotiable rule guards, plus credentials and writes to the owner's systems or accounts) gets the same models, review and mutation check in both, and the retro's asymmetry holds in both. So do end-to-end runs (`phases.md` Phase 2): sections chosen by the diff while iterating, the full suite at every gate.
 
 ## Token budget
 
