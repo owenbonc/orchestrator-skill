@@ -56,7 +56,13 @@ else
   step lint pnpm lint
   # Parallel agents share the machine, so uncapped test workers time each other out.
   export VITEST_MAX_WORKERS="${VITEST_MAX_WORKERS:-$(( ($(getconf _NPROCESSORS_ONLN) + 1) / 2 ))}"
+  # One full test run at a time across the repo's worktrees, whichever session starts it.
+  lock="${VERIFY_LOCK:-/tmp/verify-$(basename "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")").lock}"
+  until mkdir "$lock" 2>/dev/null; do sleep 20; done
+  trap 'rmdir "$lock"' EXIT
   step test pnpm test
+  rmdir "$lock"
+  trap - EXIT
   step build pnpm build
   step secrets scan_secrets
 fi
