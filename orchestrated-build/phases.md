@@ -1,6 +1,6 @@
 # Phases 0–6: a new project or phase
 
-Read when `SKILL.md` sizes the request as a new project, a new phase, or several modules that share new contracts. Its skills, token budget, review and merge rules, pausing rules and standing rules all apply here.
+Read when `SKILL.md` sizes the request as a new project, a new phase, or several modules that share new contracts. Its skills, token budget, review and merge rules, pausing rules and standing rules all apply here. These phases run in stages, one orchestrator session each (Decide, Build, Ship), handing over as `SKILL.md`'s "Pausing and picking up" says; the day-to-day tracks have no stages.
 
 ## Phase 0: Gather facts before asking anything
 
@@ -45,7 +45,7 @@ Read when `SKILL.md` sizes the request as a new project, a new phase, or several
    - `deslop.md`, copied from `templates/deslop.md`, beside `common.md`
    - `modules.md`: contracts plus file ownership
    - one brief per agent: its task, the exact SPEC paragraphs it needs quoted (not whole sections; the agent reads more only where the excerpt is silent), the specialist skills it needs, fixtures, tests
-4. **Fan out**: one background agent per independent module with `isolation: "worktree"`, launched in a single message. Agent worktrees start from the remote's default branch, not the phase branch, so each brief opens with `scripts/agent-setup.sh origin/<phase-branch>`. Each owns disjoint files. Tell them to avoid schema migrations, or to flag them loudly.
+4. **Fan out**: one background agent per independent module with `isolation: "worktree"`, launched in a single message. They are this session's subagents, so their reports reach only it: it hands over while they run only as `SKILL.md`'s "Running builders" allows. Agent worktrees start from the remote's default branch, not the phase branch, so each brief opens with `scripts/agent-setup.sh origin/<phase-branch>`. Each owns disjoint files. Tell them to avoid schema migrations, or to flag them loudly.
 5. While they build, do the work only you can do: owner-side setup (e.g. creating Notion databases, seeding data from the owner's files), studying real data to build **synthetic** fixtures, answering the owner.
 
 ## Phase 4: One PR per agent, then verify
