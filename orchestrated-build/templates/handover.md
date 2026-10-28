@@ -3,6 +3,7 @@
 Read this, then every file it names. Its decisions are settled; its "done" claims are checked on the real artifact before you build on them.
 
 ## Standing rules
+- Priority: <quality first | tokens first> (`SKILL.md`, Priority).
 - `AGENTS.md` and `SPEC.md` §<non-negotiable rules>.
 - Project-specific: where the owner's live app runs and what never to touch there; how to push and merge; scratch-server ports; disk or cost limits.
 

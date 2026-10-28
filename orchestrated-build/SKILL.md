@@ -36,14 +36,28 @@ Briefs always name the essential skills: `ponytail` (full), the pstack principle
 
 ## Quality gates
 
-These never bend for tokens or time. Every efficiency rule below (models, reading, splitting builders, hand-overs, the retro) moves only inside them, and where its condition is unclear it takes the quality side.
+These never bend for tokens or time. Every efficiency rule below (models, reading, splitting builders, hand-overs, the retro) moves only inside them, and where its condition is unclear it takes the side the priority names (below), the quality side always on safety-critical work.
 
 - SPEC agreed, and every behaviour change written into SPEC, before the code.
 - `scripts/verify.sh` prints READY.
 - The real thing exercised: the running app, the built artifact on a fixture, and once for real each thing its test harness emulates.
-- The combined review's blind pass, and the mutation check on safety-critical pieces (Review and merge).
+- The combined review's blind pass (in tokens first, on safety-critical pieces only), and the mutation check on safety-critical pieces (Review and merge).
 - You read safety-critical diffs yourself.
 - Merges only through the merge gate.
+
+## Priority: quality first or tokens first
+
+Owen sets it per request ("quality first", "tokens first") or per project with a `Priority:` line in its AGENTS.md; with neither it is **quality first**. Record it in the resume note so a hand-over keeps it, and name it in each brief. It turns only these dials; the quality gates hold in both, because a cheap build that ships a safety bug saves nothing.
+
+| Dial | Quality first | Tokens first |
+|---|---|---|
+| A model choice whose condition is unclear (Token budget) | the stronger model | the cheaper one, except on safety-critical work |
+| Effort | `medium` for settled, mechanical work; the default otherwise; `high` for Opus on an unsettled safety-critical design | `medium` for all settled work; the default otherwise |
+| Builders | parallel where files are disjoint; a fresh fix agent unless the findings are local and mechanical | fewer, run in sequence where their reading overlaps; a builder takes its own fixes while under 50% context, unless one is safety-critical |
+| Review of a PR with no safety-critical code | blind pass, then Comment Sicko and `ponytail-review` | one Sonnet pass on the real diff: Comment Sicko and `ponytail-review`, no blind pass (Owen, 26 October 2026) |
+| UI polish | impeccable `audit` and `critique`, `review-animations`, `break-ui` | impeccable `audit` |
+
+Safety-critical work (anything a SPEC non-negotiable rule guards, plus credentials and writes to the owner's systems or accounts) gets the same models, review and mutation check in both, and the retro's asymmetry holds in both. So do end-to-end runs (`phases.md` Phase 2): sections chosen by the diff while iterating, the full suite at every gate.
 
 ## Token budget
 
@@ -61,13 +75,15 @@ These never bend for tokens or time. Every efficiency rule below (models, readin
   - **Escalate on evidence, never mid-run.** Start each piece at the lowest model these rules allow; a failure moves its next round up one model. Never switch a running agent: it throws away its work.
 - **Read what you vouch for; delegate what you only need a fact from.** Read yourself the SPEC text you rewrite, the options you show the owner, safety-critical diffs and the review findings you accept or reject. A fact you only need (where something is defined, what a page's markup holds, whether a route exists) comes from a read-only subagent (`Explore`), and builders get file paths, never your reading of the files.
 - **Size each builder before launching it.** Its brief names the exact files to read and to change. When it reaches into more than about two subsystems, or its reading alone would take a large share of its ~250k-token budget, split it at a contract both halves can test on their own (each against a fake of the other side), committing the contract first as their shared base. When correctness depends on one mind holding the whole piece (a state machine and its gate), don't split it: give it one Opus builder with a staged brief (the contract first, then the implementation in commits) and the progress report at the context line.
+- **Keep the orchestrator's session for the build.** Answer side questions (status, the roadmap, costs) in a separate short session from the resume note: every orchestrator turn re-reads its whole history, so a question there costs as much as a build step and pushes it toward its hand-over.
+- **Finish builders within the cache's hour where the work allows.** A report that lands after the session's prompt cache has expired is read back at full price; size a brief toward a report inside about an hour, but never split a piece that needs one mind (above) for it.
 - **Log the spend.** Each agent's model, effort, the condition that chose them, and its tokens (the `subagent_tokens` its completion notice reports) go in the resume note's agent log when it finishes, with what it produced and how many review findings and fix rounds followed.
 
 ## Review and merge
 
 Every PR, an agent's into a phase branch or a day-to-day one into main:
 
-- **Combined review, blind pass first.** One fresh subagent, on Opus for safety-critical pieces (anything a SPEC non-negotiable rule guards, plus credentials and writes to the owner's systems or accounts), on Sonnet otherwise. A comment, commit message or report that says what the code does anchors a reviewer on the claim, so it reviews in two passes:
+- **Combined review, blind pass first.** One fresh subagent, on Opus for safety-critical pieces (anything a SPEC non-negotiable rule guards, plus credentials and writes to the owner's systems or accounts), on Sonnet otherwise. A comment, commit message or report that says what the code does anchors a reviewer on the claim, so it reviews in two passes (in tokens first, a PR with no safety-critical code skips pass 1: one Sonnet reviewer runs pass 2 on the real diff):
   1. **Blind.** Run `node ~/.claude/skills/orchestrated-build/templates/strip-comments.mjs <base> <dir>` in the branch's worktree and give the reviewer that comment-stripped copy of every changed file, SPEC's rules and the contracts, and nothing else: no builder report, brief, commit messages, PR body or your own conclusions. It reads the connected code it needs from the stripped copy or the repo's unchanged files, and writes its correctness and safety findings (by file and symbol, since the copy's line numbers differ) before it opens the real diff.
   2. **Commented.** Comment Sicko (`templates/comment-sicko.md`, the diff, and the project's extra keeps below) and `ponytail-review` on the real diff, checking every comment's claim against what pass 1 found, then pass 1's findings mapped to real file:line.
 - **Mutation check** on safety-critical pieces, by the same reviewer after pass 2: for each guard a SPEC non-negotiable rule depends on, break it in the branch's worktree (invert the condition, return early, drop the call), run that guard's tests, and restore the file with `git checkout -- <file>`; it ends with a clean `git status` and commits nothing. A break no test catches is a finding: the missing test is written before merge. The report lists each guard (file:line), the break, and the test that caught it.
@@ -82,10 +98,10 @@ After the first phase, most work is a stream of single-theme changes. Each gets 
 
 ### Change track: one theme
 
-1. Restate the change in a line or two. Ask only the questions whose answers change what you build, each with your recommended answer; when there are none, say so and start.
+1. Restate the change in a line or two. Ask only the questions whose answers change what you build, each with your recommended answer, all in one round; when there are none, say so and start. Before writing SPEC, show Owen the behaviour in a short summary and get his yes, so his refinements land once in the summary rather than as rewrites of SPEC.
 2. Work in a worktree on its own branch, starting with `scripts/agent-setup.sh origin/main`, never in the main checkout.
 3. Update SPEC.md first when behaviour changes.
-4. Settle visual changes before code: show two or three options side by side (an Artifact, a scratch route or screenshots), let Owen pick, then build the pick, checking it against the option he picked rather than against a description of it. The PR body carries before and after screenshots; in a private repo, push them to an orphan `pr-shots/<branch>` branch (`git hash-object -w`, `mktree`, `commit-tree`, so no checkout moves) and embed them by that commit's SHA.
+4. Settle visual changes before code: show two or three options side by side (an Artifact, a scratch route or screenshots), let Owen pick, then build the pick, linking the option he picked in every brief that builds it and checking the result against it rather than against a description of it. The PR body carries before and after screenshots; in a private repo, push them to an orphan `pr-shots/<branch>` branch (`git hash-object -w`, `mktree`, `commit-tree`, so no checkout moves) and embed them by that commit's SHA.
 5. Test the risky logic, then exercise the real thing.
 6. Once `scripts/verify.sh` prints READY, follow `templates/deslop.md` on your diff against main, then run the combined review. Fix what holds up and fill the PR's `## Review` lines.
 7. Open the PR and offer Auto-fix; merge through the gate once CI is green.

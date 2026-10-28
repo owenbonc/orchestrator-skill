@@ -14,7 +14,7 @@ Read when `SKILL.md` sizes the request as a new project, a new phase, or several
 - Cover: who it's for, scope and what's out, architecture and stack, where data lives, integrations and their auth, safety rules, cost limits, UI direction, phasing ("barebones first" means define Phase 1 tightly), and how success is checked.
 - When a new fact changes a recommendation mid-round (an agent's research, an owner's aside), say so plainly and re-ask that question.
 - Write `SPEC.md`: purpose, non-negotiable rules, architecture, data ownership, every module's behaviour, API contracts, the data model, the UI direction, **numbered acceptance criteria per phase**, and later phases specified briefly. Write `AGENTS.md` (from `templates/AGENTS.md`) and a `CLAUDE.md` containing `@AGENTS.md`.
-- Show the spec, and build only after the owner confirms it. Later owner requests go into the spec first, then into the code.
+- Before writing it out, show the owner the behaviour in a short summary and settle his refinements there, so SPEC is written once. Show the spec, and build only after the owner confirms it. Later owner requests go into the spec first, then into the code.
 
 ## Phase 2: Set up the repo
 
@@ -29,6 +29,7 @@ Read when `SKILL.md` sizes the request as a new project, a new phase, or several
   - When the owner runs the live app from the main checkout, add the guard hook (`templates/guard-main-checkout.mjs` and its test into `scripts/`, wired in `.claude/settings.json` as its header shows). It refuses edits and branch-moving git commands there, so every session works in `.claude/worktrees/`, and `pkill` or `killall` anywhere, since a name matches the live app too.
   - When the app reads the owner's accounts (Notion, email, an API), a `scripts/scratch-<app>.sh <port>` runs it on a fresh database with each of them faked, so agents check the UI without the owner's data. Two sessions hand-building the same fake server is the signal you waited too long.
   - `scripts/merge-gate.mjs` (from `templates/merge-gate.mjs`, tested by `templates/merge-gate.test.mjs`) is the only way a PR merges: an agent's into the phase branch, or a day-to-day change into main. It refuses until the PR body's `## Review` section fills in `- deslop:`, `- no-comments:` and `- ponytail-review:` and every CI check on the head commit passed, then merges that exact commit from outside any checkout.
+  - An end-to-end suite gets a path map: each section names the source paths it covers, and `--changed <base>` runs only the sections the diff touches, or the full suite when the diff touches shared code (the run's core, its gates, the contracts) or a path no section maps. Builders iterate on `--changed`; the full suite runs before each review, before and after each fix round, and before the PR, so coverage at every gate is unchanged and a stale map costs a full run, never a miss.
   - Later, whenever you catch yourself writing the same instruction into a second brief, turn it into a script, hook, lint or test instead.
 
 ## Phase 3: Foundation first, then fan out
@@ -60,7 +61,7 @@ Read when `SKILL.md` sizes the request as a new project, a new phase, or several
 
 ## Phase 5: Independent review of the whole phase against the spec
 
-- Launch one fresh Opus reviewer agent for the whole phase or slice, with no stake in the code (`templates/review-brief.md`), giving it the comment-stripped copy (`templates/strip-comments.mjs`) for its blind first pass and nothing about the builders' claims. It runs the thermo-nuclear review and `ponytail-review`, a mutation check of the safety guards, checks every acceptance criterion in SPEC (pass, fail or unverified, with evidence), checks the safety rules, and for UI runs the impeccable audit/critique, `review-animations` and `break-ui`.
+- Launch one fresh Opus reviewer agent for the whole phase or slice, with no stake in the code (`templates/review-brief.md`), giving it the comment-stripped copy (`templates/strip-comments.mjs`) for its blind first pass (in tokens first, of the safety-critical files only) and nothing about the builders' claims. It runs the thermo-nuclear review and `ponytail-review`, a mutation check of the safety guards, checks every acceptance criterion in SPEC (pass, fail or unverified, with evidence), checks the safety rules, and for UI runs the impeccable audit/critique, `review-animations` and `break-ui`.
 - Triage the findings yourself: confirm each against the code and drop the noise. Merge the end-to-end suite into the branch before the fix round starts, so each fix agent runs it: a fix that breaks an end-to-end check is then caught by the agent that made it, not after its merge. Route fixes by the fix rule (`SKILL.md`, Review and merge; disjoint files again, each fix agent briefed on top of `common.md` like a builder, so deslop and the Deslop report line apply) or fix small things directly. Re-run `scripts/verify.sh` and the real-artifact verification.
 
 ## Phase 6: Ship
