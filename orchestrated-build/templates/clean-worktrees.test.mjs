@@ -171,7 +171,7 @@ describe('an apply across every case', () => {
     write(wt.modified, 'tracked.txt', 'changed\n');
     write(wt.staged, 'new.txt');
     git(wt.staged, 'add', 'new.txt');
-    git(repo.main, 'worktree', 'lock', wt.locked);
+    git(repo.main, 'worktree', 'lock', '--reason', 'held by a test', wt.locked);
     occupy(wt['in-use']);
     write(wt['in-subfolder'], 'build/sub/out.txt');
     occupy(path.join(wt['in-subfolder'], 'build/sub'));
@@ -232,7 +232,7 @@ describe('an apply across every case', () => {
     'pushed-elsewhere': /is not in origin\/main/,
     modified: /a tracked file is modified or staged/,
     staged: /a tracked file is modified or staged/,
-    locked: /it is locked/,
+    locked: /it is locked held by a test/,
     'in-use': /a process has its cwd there/,
     'in-subfolder': /a process has its cwd there/,
     'café': /lsof/,
@@ -499,6 +499,16 @@ describe('the process check', () => {
     const result = apply(repo, [], { cwd: caller });
     assertStayed(result, path.join(link, 'in-use'), /a process has its cwd there/);
     assertStayed(result, path.join(link, 'caller'), /the checkout this ran from/);
+  });
+
+  it('settles letter case, so a registered path in another case still matches', (t) => {
+    const repo = makeRepo();
+    const wt = addWorktree(repo, 'in-use');
+    const shouted = path.join(path.dirname(repo.root), path.basename(repo.root).toUpperCase());
+    if (!existsSync(shouted)) return t.skip('a case-sensitive disk');
+    writeFileSync(path.join(repo.main, '.git/worktrees/in-use/gitdir'), `${path.join(shouted, 'wts/in-use/.git')}\n`);
+    occupy(wt);
+    assertStayed(apply(repo), path.join(shouted, 'wts/in-use'), /a process has its cwd there/);
   });
 
   it('does not mistake a sibling with a longer name for the worktree', () => {

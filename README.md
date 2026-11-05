@@ -68,7 +68,8 @@ orchestrated-build/
   templates/     files copied into a project: AGENTS.md, ci.yml, verify.sh,
                  merge-gate.mjs, guard-main-checkout.mjs (each with its test),
                  agent-setup.sh, agent and review briefs, hand-over note, module map;
-                 and strip-comments.mjs, which makes the blind review's copy
+                 strip-comments.mjs, which makes the blind review's copy; and
+                 clean-worktrees.mjs (with its test), which removes merged worktrees
 ```
 
 ## Install

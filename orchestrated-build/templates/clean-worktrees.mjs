@@ -42,10 +42,10 @@ function succeeds(cwd, ...args) {
   }
 }
 
-// The notes folder may not exist yet, so this resolves the part of the path that does.
+// Native, because only it settles letter case, which lsof reports as it is on disk. The notes folder may not exist yet.
 function real(target) {
   try {
-    return realpathSync(target);
+    return realpathSync.native(target);
   } catch {
     return path.join(real(path.dirname(target)), path.basename(target));
   }
@@ -64,7 +64,7 @@ function listWorktrees(cwd) {
         path: listed,
         real: real(listed),
         head: fields.find((field) => field.startsWith('HEAD '))?.slice('HEAD '.length),
-        locked: fields.some((field) => /^locked( |$)/.test(field)),
+        locked: fields.find((field) => /^locked( |$)/.test(field)),
       };
     });
 }
@@ -114,7 +114,7 @@ const copyPath = (wt, file) => path.join(notes, path.basename(wt.path), file);
 function assess(wt) {
   if (wt.real === caller) throw new Error('it is the checkout this ran from');
   if (!existsSync(wt.real)) throw new Error('its folder is gone');
-  if (wt.locked) throw new Error('it is locked');
+  if (wt.locked) throw new Error(`it is ${wt.locked}`);
   const short = wt.head?.slice(0, 7);
   if (!succeeds(callerDir, 'merge-base', '--is-ancestor', wt.head, base)) throw new Error(`HEAD ${short} is not in ${base}`);
   // shortcut: a branch deleted on the remote still counts until a prune, which only matters for a local --base.
