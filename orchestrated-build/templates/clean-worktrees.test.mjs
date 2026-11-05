@@ -26,10 +26,15 @@ import { fileURLToPath } from 'node:url';
 
 const script = fileURLToPath(new URL('./clean-worktrees.mjs', import.meta.url));
 const REPORT = 'report body\n';
+const BINARY = Buffer.from(Array.from({ length: 256 }, (_, i) => i));
+
+const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+const realLsof = execFileSync('sh', ['-c', 'PATH="$PATH:/usr/sbin:/usr/bin" command -v lsof'], { encoding: 'utf8' }).trim();
 
 // A run from a git hook inherits GIT_DIR, which would point these commands at the real repo.
 const env = {
   ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_'))),
+  PATH: `${process.env.PATH}:${path.dirname(realLsof)}`,
   GIT_CONFIG_GLOBAL: '/dev/null',
   GIT_CONFIG_SYSTEM: '/dev/null',
   GIT_AUTHOR_NAME: 'Test',
@@ -39,8 +44,6 @@ const env = {
 };
 const git = (cwd, ...args) =>
   execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
-const realLsof = execFileSync('sh', ['-c', 'PATH="$PATH:/usr/sbin:/usr/bin" command -v lsof'], { encoding: 'utf8' }).trim();
 
 const roots = [];
 const children = [];
@@ -103,7 +106,7 @@ function run(repo, args = [], { cwd = repo.main, nodeArgs = [], extraEnv = {} } 
 
 const apply = (repo, args = [], options) => run(repo, ['--apply', '--notes', repo.notes, ...args], options);
 
-// A folder of fakes that goes first on PATH: { name: sh body }.
+// A folder of fake commands for PATH: { name: sh body }.
 function fakes(repo, scripts) {
   const dir = mkdtempSync(path.join(repo.root, 'fakes-'));
   for (const [name, body] of Object.entries(scripts)) {
@@ -114,7 +117,8 @@ function fakes(repo, scripts) {
 }
 
 function lineFor(result, prefix, wt) {
-  return result.stdout.split('\n').find((line) => line === `${prefix} ${wt}` || line.startsWith(`${prefix} ${wt}: `) || line.startsWith(`${prefix} ${wt} (`));
+  const start = `${prefix} ${wt}`;
+  return result.stdout.split('\n').find((line) => line === start || line.startsWith(`${start}: `) || line.startsWith(`${start} (`));
 }
 
 function assertStayed(result, wt, why) {
@@ -127,6 +131,11 @@ function assertStayed(result, wt, why) {
 function assertRemoved(result, wt) {
   assert.ok(lineFor(result, 'removed', wt), `no "removed" line for ${wt} in:\n${result.stdout}\n${result.stderr}`);
   assert.equal(existsSync(wt), false, `${wt} is still there`);
+}
+
+function assertFile(file, content = REPORT) {
+  assert.ok(existsSync(file), `${file} is gone`);
+  assert.ok(readFileSync(file).equals(Buffer.from(content)), `${file} changed`);
 }
 
 // Every path under dir with its type, mode, mtime and content: any write shows.
@@ -205,7 +214,7 @@ describe('an apply across every case', () => {
 
     wt['with-report'] = addWorktree(repo, 'with-report');
     write(wt['with-report'], 'report.md');
-    write(wt['with-report'], 'reports/deep/data.bin', Buffer.from(Array.from({ length: 256 }, (_, i) => i)));
+    write(wt['with-report'], 'reports/deep/data.bin', BINARY);
 
     wt['already-copied'] = addWorktree(repo, 'already-copied');
     write(wt['already-copied'], 'report.md');
@@ -220,7 +229,7 @@ describe('an apply across every case', () => {
     branchesBefore = git(repo.main, 'for-each-ref', '--format=%(refname) %(objectname)', 'refs/heads');
     const log = path.join(repo.root, 'git.log');
     const spy = fakes(repo, { git: `printf '%s\\n' "$*" >> "${log}"\nexec "${realGit}" "$@"` });
-    const options = { cwd: wt.caller, extraEnv: { PATH: `${spy}:${process.env.PATH}:/usr/sbin` } };
+    const options = { cwd: wt.caller, extraEnv: { PATH: `${spy}:${env.PATH}` } };
     result = apply(repo, [], options);
     notesAfterFirst = snapshot(repo.notes);
     gitLog = readFileSync(log, 'utf8');
@@ -240,7 +249,7 @@ describe('an apply across every case', () => {
   for (const [name, why] of Object.entries(refusals)) {
     it(`keeps ${name} and leaves its untracked report where it is`, () => {
       assertStayed(result, wt[name], why);
-      assert.equal(readFileSync(path.join(wt[name], 'report.md'), 'utf8'), REPORT);
+      assertFile(path.join(wt[name], 'report.md'));
       assert.equal(existsSync(path.join(repo.notes, name)), false, 'its report was copied');
     });
   }
@@ -251,29 +260,29 @@ describe('an apply across every case', () => {
 
   it('keeps the main checkout, with its untracked and ignored files', () => {
     assertStayed(result, repo.main, /the main checkout/);
-    assert.equal(readFileSync(path.join(repo.main, 'main-note.txt'), 'utf8'), REPORT);
-    assert.equal(readFileSync(path.join(repo.main, 'data/app.db'), 'utf8'), REPORT);
+    assertFile(path.join(repo.main, 'main-note.txt'));
+    assertFile(path.join(repo.main, 'data/app.db'));
     assert.equal(existsSync(path.join(repo.notes, 'main')), false);
   });
 
   it('keeps a worktree whose target already differs, deleting and copying nothing', () => {
     assertStayed(result, wt.conflict, /already exists with different content/);
-    assert.equal(readFileSync(path.join(wt.conflict, 'a.txt'), 'utf8'), REPORT);
-    assert.equal(readFileSync(path.join(wt.conflict, 'b.txt'), 'utf8'), REPORT);
-    assert.equal(readFileSync(path.join(repo.notes, 'conflict/b.txt'), 'utf8'), 'different\n');
+    assertFile(path.join(wt.conflict, 'a.txt'));
+    assertFile(path.join(wt.conflict, 'b.txt'));
+    assertFile(path.join(repo.notes, 'conflict/b.txt'), 'different\n');
     assert.equal(existsSync(path.join(repo.notes, 'conflict/a.txt')), false);
   });
 
   it('keeps a worktree with an untracked symlink, deleting and copying nothing', () => {
     assertStayed(result, wt.symlink, /untracked link is not a plain file/);
     assert.equal(lstatSync(path.join(wt.symlink, 'link')).isSymbolicLink(), true);
-    assert.equal(readFileSync(path.join(wt.symlink, 'plain.txt'), 'utf8'), REPORT);
+    assertFile(path.join(wt.symlink, 'plain.txt'));
     assert.equal(existsSync(path.join(repo.notes, 'symlink')), false);
   });
 
   it('keeps a worktree with an untracked nested repo', () => {
     assertStayed(result, wt['nested-repo'], /is not a plain file/);
-    assert.equal(readFileSync(path.join(wt['nested-repo'], 'vendor/file.txt'), 'utf8'), REPORT);
+    assertFile(path.join(wt['nested-repo'], 'vendor/file.txt'));
   });
 
   it('keeps a worktree that holds another one, which would go with it', () => {
@@ -297,23 +306,20 @@ describe('an apply across every case', () => {
 
   it('copies every untracked report byte for byte, then removes the worktree', () => {
     assertRemoved(result, wt['with-report']);
-    assert.equal(readFileSync(path.join(repo.notes, 'with-report/report.md'), 'utf8'), REPORT);
-    assert.deepEqual(
-      [...readFileSync(path.join(repo.notes, 'with-report/reports/deep/data.bin'))],
-      Array.from({ length: 256 }, (_, i) => i),
-    );
+    assertFile(path.join(repo.notes, 'with-report/report.md'));
+    assertFile(path.join(repo.notes, 'with-report/reports/deep/data.bin'), BINARY);
   });
 
   it('counts an identical file already in the notes as copied', () => {
     assertRemoved(result, wt['already-copied']);
-    assert.equal(readFileSync(path.join(repo.notes, 'already-copied/report.md'), 'utf8'), REPORT);
+    assertFile(path.join(repo.notes, 'already-copied/report.md'));
   });
 
   it('lets ignored files go with the worktree, uncopied, without following links', () => {
     assertRemoved(result, wt.ignored);
     assert.equal(existsSync(path.join(repo.notes, 'ignored')), false);
-    assert.equal(readFileSync(path.join(repo.main, '.env'), 'utf8'), 'SECRET=1\n');
-    assert.equal(readFileSync(path.join(repo.root, 'outside/keep.txt'), 'utf8'), REPORT);
+    assertFile(path.join(repo.main, '.env'), 'SECRET=1\n');
+    assertFile(path.join(repo.root, 'outside/keep.txt'));
   });
 
   it('never forces, prunes or touches a branch', () => {
@@ -542,8 +548,8 @@ syncBuiltinESMExports();
     );
     const result = apply(repo, [], { nodeArgs: ['--import', preload] });
     assertStayed(result, wt, /differs/);
-    assert.equal(readFileSync(path.join(wt, 'a.txt'), 'utf8'), REPORT);
-    assert.equal(readFileSync(path.join(wt, 'b.txt'), 'utf8'), REPORT);
+    assertFile(path.join(wt, 'a.txt'));
+    assertFile(path.join(wt, 'b.txt'));
   });
 
   it('keeps the worktree when a copy cannot be made', () => {
@@ -552,7 +558,7 @@ syncBuiltinESMExports();
     write(wt, 'report.md');
     write(repo.notes, 'blocked', 'a file where the folder belongs\n');
     assertStayed(apply(repo), wt, /./);
-    assert.equal(readFileSync(path.join(wt, 'report.md'), 'utf8'), REPORT);
+    assertFile(path.join(wt, 'report.md'));
   });
 
   it('keeps a worktree that holds the notes folder, which would go with it', () => {
@@ -561,7 +567,7 @@ syncBuiltinESMExports();
     write(wt, 'report.md');
     const result = run(repo, ['--apply', '--notes', path.join(wt, 'build/notes')]);
     assertStayed(result, wt, /the notes folder is inside it/);
-    assert.equal(readFileSync(path.join(wt, 'report.md'), 'utf8'), REPORT);
+    assertFile(path.join(wt, 'report.md'));
   });
 
   it('reports a worktree git refuses to remove as stayed, with its report safe in the notes', () => {
@@ -569,10 +575,11 @@ syncBuiltinESMExports();
     const wt = addWorktree(repo, 'refused');
     write(wt, 'report.md');
     const body = `case "$*" in *"worktree remove"*) echo 'fatal: refused by the test' >&2; exit 128;; esac\nexec "${realGit}" "$@"`;
-    const result = apply(repo, [], { extraEnv: { PATH: `${fakes(repo, { git: body })}:${process.env.PATH}:/usr/sbin` } });
+    const result = apply(repo, [], { extraEnv: { PATH: `${fakes(repo, { git: body })}:${env.PATH}` } });
     assertStayed(result, wt, /refused by the test/);
+    assert.match(result.stdout, /^moved 1 untracked from .*refused to /m);
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(readFileSync(path.join(repo.notes, 'refused/report.md'), 'utf8'), REPORT);
+    assertFile(path.join(repo.notes, 'refused/report.md'));
   });
 });
 
@@ -581,7 +588,7 @@ describe('the checks after an apply', () => {
     const repo = makeRepo();
     addWorktree(repo, 'clean');
     const lsof = `"${realGit}" -C "${repo.main}" commit -q --allow-empty -m moved\nexec "${realLsof}" "$@"`;
-    const result = apply(repo, [], { extraEnv: { PATH: `${fakes(repo, { lsof })}:${process.env.PATH}` } });
+    const result = apply(repo, [], { extraEnv: { PATH: `${fakes(repo, { lsof })}:${env.PATH}` } });
     assert.equal(result.status, 1);
     assert.match(result.stderr, /MAIN CHECKOUT HEAD MOVED/);
   });

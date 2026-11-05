@@ -85,13 +85,14 @@ function processCwds() {
 }
 
 const sameBytes = (a, b) => readFileSync(a).equals(readFileSync(b));
+const say = (line) => process.stdout.write(`${line}\n`);
 
 const callerDir = process.cwd();
 const worktrees = listWorktrees(callerDir);
 const [main, ...linked] = worktrees;
 const mainHead = git(main.real, 'rev-parse', 'HEAD').trim();
-const caller = real(git(callerDir, 'rev-parse', '--show-toplevel').trim());
-const notes = options.notes && real(path.resolve(options.notes));
+const caller = git(callerDir, 'rev-parse', '--show-toplevel').trim();
+const notes = options.notes && real(options.notes);
 
 if (apply) {
   try {
@@ -101,7 +102,7 @@ if (apply) {
     process.exit(1);
   }
 } else {
-  process.stdout.write(`Dry run against ${base} as last fetched; --apply fetches first, so it may remove more.\n`);
+  say(`Dry run against ${base} as last fetched; --apply fetches first, so it may remove more.`);
 }
 if (!succeeds(callerDir, 'rev-parse', '--verify', '--quiet', `${base}^{commit}`)) {
   process.stderr.write(`${base} is not a commit here, so nothing was removed.\n`);
@@ -115,9 +116,9 @@ function assess(wt) {
   if (wt.real === caller) throw new Error('it is the checkout this ran from');
   if (!existsSync(wt.real)) throw new Error('its folder is gone');
   if (wt.locked) throw new Error(`it is ${wt.locked}`);
-  const short = wt.head?.slice(0, 7);
+  const short = wt.head.slice(0, 7);
   if (!succeeds(callerDir, 'merge-base', '--is-ancestor', wt.head, base)) throw new Error(`HEAD ${short} is not in ${base}`);
-  // shortcut: a branch deleted on the remote still counts until a prune, which only matters for a local --base.
+  // shortcut: a branch deleted on the remote still counts until a prune; ask the remote itself if local bases become routine.
   if (!git(callerDir, 'for-each-ref', '--count=1', '--contains', wt.head, 'refs/remotes/origin').trim()) {
     throw new Error(`HEAD ${short} is not on origin`);
   }
@@ -159,12 +160,13 @@ function moveToNotes(wt, files) {
     if (!sameBytes(path.join(wt.real, file), copyPath(wt, file))) throw new Error(`the copy of ${file} differs from it`);
   }
   for (const file of files) rmSync(path.join(wt.real, file));
+  if (files.length > 0) say(`moved ${files.length} untracked from ${wt.path} to ${path.dirname(copyPath(wt, 'file'))}`);
 }
 
-const answers = (portNumber) =>
+const portAnswers = () =>
   new Promise((resolve) => {
     // shortcut: a TCP connect, so a hung app that still accepts connections passes; send a request if that bites.
-    const socket = connect({ port: Number(portNumber), host: 'localhost', timeout: 5000 });
+    const socket = connect({ port: Number(port), host: 'localhost', timeout: 5000 });
     const finish = (answered) => {
       socket.destroy();
       resolve(answered);
@@ -174,30 +176,28 @@ const answers = (portNumber) =>
     socket.once('error', () => finish(false));
   });
 
-const say = (line) => process.stdout.write(`${line}\n`);
 say(`stayed ${main.path}: it is the main checkout`);
-let removed = 0;
+let gone = 0;
 let stayed = 1;
 // Deepest first, so a worktree inside another goes before the one that holds it.
 for (const wt of [...linked].sort((a, b) => b.real.length - a.real.length)) {
   // Anything thrown keeps the worktree, so a refusal and a failed command end the same way.
   try {
     const untracked = assess(wt);
-    const count = untracked.length > 0 ? ` (${untracked.length} untracked to the notes folder)` : '';
     if (apply) {
       moveToNotes(wt, untracked);
       git(callerDir, 'worktree', 'remove', wt.path);
-      say(`removed ${wt.path}${count}`);
+      say(`removed ${wt.path}`);
     } else {
-      say(`would remove ${wt.path}${count}`);
+      say(`would remove ${wt.path}${untracked.length > 0 ? ` (moving ${untracked.length} untracked to the notes first)` : ''}`);
     }
-    removed += 1;
+    gone += 1;
   } catch (error) {
     stayed += 1;
     say(`stayed ${wt.path}: ${(error.stderr || error.message).trim().split('\n')[0]}`);
   }
 }
-say(`${apply ? 'Removed' : 'Would remove'} ${removed}; ${stayed} stayed.`);
+say(`${apply ? 'Removed' : 'Would remove'} ${gone}; ${stayed} stayed.`);
 
 let healthy = true;
 function alarm(message) {
@@ -208,7 +208,7 @@ const headNow = git(main.real, 'rev-parse', 'HEAD').trim();
 if (headNow === mainHead) say(`Main checkout HEAD unchanged at ${mainHead.slice(0, 7)}.`);
 else alarm(`MAIN CHECKOUT HEAD MOVED from ${mainHead} to ${headNow}`);
 if (port !== undefined) {
-  if (await answers(port)) say(`Port ${port} answers.`);
+  if (await portAnswers()) say(`Port ${port} answers.`);
   else alarm(`NOTHING ANSWERS ON PORT ${port}`);
 }
 if (!healthy) process.exit(1);
