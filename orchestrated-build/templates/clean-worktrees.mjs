@@ -121,7 +121,7 @@ function assess(wt) {
   if (!git(callerDir, 'for-each-ref', '--count=1', '--contains', wt.head, 'refs/remotes/origin').trim()) {
     throw new Error(`HEAD ${short} is not on origin`);
   }
-  const status = git(wt.real, 'status', '--porcelain', '-z', '--untracked-files=all', '--ignore-submodules=none')
+  const status = git(wt.real, 'status', '--porcelain', '-z', '--untracked-files=all')
     .split('\0')
     .filter(Boolean);
   const untracked = status.filter((entry) => entry.startsWith('?? ')).map((entry) => entry.slice(3));
