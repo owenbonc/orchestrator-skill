@@ -8,7 +8,13 @@ The skill sizes each request first, then picks a track:
 
 ```mermaid
 flowchart TD
-    R[Request] --> S{Size it}
+    R[Request] --> PQ{Priority}
+    PQ -->|quality first, the default| QF[Stronger model when unsure, about four agents at once, fresh fix agents, full UI polish]
+    PQ -->|middle ground| MG[As quality first, but a builder takes its own fixes and a queue gets one combined review]
+    PQ -->|tokens first| TF[Cheaper model when unsure, about two agents at once, a builder takes its own fixes, UI audit only]
+    QF --> S{Size it}
+    MG --> S
+    TF --> S
     S -->|quick edit or question| D[Just do it]
     S -->|one theme| C[Change track]
     S -->|bug| B[Bug track]
@@ -22,7 +28,9 @@ flowchart TD
     A --> V
     C --> V
     B --> V
-    V[verify.sh prints READY, then deslop] --> BL[Blind review of comment-stripped code]
+    V[verify.sh prints READY, then deslop] --> NS{Tokens first with nothing safety-critical?}
+    NS -->|no| BL[Blind review of comment-stripped code]
+    NS -->|yes, one Sonnet pass| RV
     BL --> RV[Comment Sicko and ponytail-review on the real diff]
     RV --> MU[Mutation check of the safety guards]
     MU --> PR[PR with filled Review section]
@@ -49,7 +57,7 @@ The phases (`phases.md`):
 
 Every PR gets a combined review: a blind first pass on a comment-stripped copy of the changed code (`templates/strip-comments.mjs`), so no comment, commit message or builder report anchors the reviewer; then Comment Sicko and `ponytail-review` on the real diff; then a mutation check that breaks each safety guard in turn, where a break no test catches gets its test before merge. The PR fills its `## Review` section and merges only through `scripts/merge-gate.mjs` once CI is green. Long builds hand over through a resume note and continue in a fresh session per stage.
 
-Each agent's model follows its task, not its role: Opus for code a non-negotiable rule guards or a design not yet settled, Sonnet for settled work that needs judgment, Haiku for work that needs none. Every choice is logged with its tokens, moves up a model on one failure and down only on a record of clean parts. Each request runs **quality first** (the default) or **tokens first**, named in the request or by a `Priority:` line in the project's AGENTS.md; tokens first picks cheaper models and effort, sequences builders, trims UI polish and the end-to-end runs, and drops the blind review for code that isn't safety-critical. None of this bends the quality gates: an agreed SPEC, `verify.sh` READY, the real thing exercised, the blind review and mutation check on safety-critical code, and merges through the gate.
+Each agent's model follows its task, not its role: Opus for code a non-negotiable rule guards or a design not yet settled, Sonnet for settled work that needs judgment, Haiku for work that needs none. Every choice is logged with its tokens, moves up a model on one failure and down only on a record of clean parts. Each request runs **quality first** (the default), **middle ground** or **tokens first**, named in the request or by a `Priority:` line in the project's AGENTS.md. Middle ground is quality first with two savings: a fix round goes back to the agent that built the branch while it is under about 60% context, and a queue gets one combined review of its branches merged together instead of a re-review after each fix round. Tokens first picks cheaper models and effort, sequences builders, trims UI polish and the end-to-end runs, and drops the blind review for code that isn't safety-critical. None of this bends the quality gates: an agreed SPEC, `verify.sh` READY, the real thing exercised, the blind review and mutation check on safety-critical code, and merges through the gate.
 
 ## Layout
 
