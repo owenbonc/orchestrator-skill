@@ -125,6 +125,7 @@ const REGENERABLE = new Set([
   'playwright-report',
   '__pycache__',
   '.DS_Store',
+  'hook.cache.json',
 ]);
 const regenerable = (file) => REGENERABLE.has(path.basename(file)) || file.endsWith('.tsbuildinfo');
 const PAUSED = ['rebase-merge', 'rebase-apply', 'MERGE_HEAD', 'BISECT_LOG', 'CHERRY_PICK_HEAD', 'REVERT_HEAD'];
