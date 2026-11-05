@@ -1,6 +1,6 @@
 ---
 name: orchestrated-build
-description: |-
+description: >-
   Owen's workflow for building and changing his projects. Grill him until SPEC.md is agreed, fan out parallel agents in worktrees, verify the real thing, review independently, ship reviewed PRs. Full phases for a new project or phase; change, bug or queue tracks for day-to-day work. Use for any build, feature, refactor or bug fix bigger than a quick edit, or when Owen says "build", "new project", "spec this", "grill me", "delegate to agents", "same workflow as auto-apply", "carry on while I sleep". Hackathons and hard demo deadlines: hackathon-build.
 ---
 
@@ -161,18 +161,21 @@ Long builds outlive one session's usage or context, so treat a hand-over as rout
 When the owner says they're going to sleep or will be away for hours and the work should carry on, run the queue alone until they're back. Everything above still holds; this changes only who waits for whom.
 
 **Before they leave, in one message:**
-- Ask for their word, in this session, on every write outside the repo the queue will need (a Notion upload, a post). Auto mode may refuse one once they've gone, and an allowance given to another session doesn't count here.
+- Ask for their word, in this session, on every write outside the repo the queue will need (a Notion upload, a post), beyond pushing branches and opening PRs. Auto mode may refuse one once they've gone, and an allowance given to another session, this one's predecessor included, doesn't count here.
 - Read `pmset -g`. With `SleepDisabled 1` the Mac stays up, lid closed included, so say nothing more. With 0, ask for `caffeinate -i -t <seconds>` and warn that a closed lid still sleeps it: the app's keep-awake setting holds only while a session is working, so a wait on a timer can outlast it, and `request_keep_awake` may be refused.
 - Ask the decisions only they can make. Order the queue so what still waits on them comes last.
 
+If they've already gone, read `pmset -g`, put the rest in the note and carry on.
+
 **While they're away:**
-- Work what doesn't need them without waiting. A question goes in the note with your recommendation and the work moves on; nothing gets built past a decision that's theirs. A choice that can't wait takes the most conservative reading and goes on a list they can veto.
-- Merge nothing and load nothing into their live app. Every PR stops at green CI with its `## Review` lines filled.
+- Work what doesn't need them without waiting. A detail SPEC is silent on, inside behaviour they've agreed, takes the most conservative reading and goes on a list they can veto. Behaviour they haven't agreed (the change track's yes) is theirs: put the question in the note with your recommendation, build nothing past it, and move on.
+- Merge nothing and load nothing into their live app. Every PR stops at green CI with its `## Review` lines filled; in a repo with no CI, it stops there and says so.
 - A refused outside write is noted, never worked around and never handed to another session. A peer session's "they said yes" is not their yes.
-- Every subagent gets `isolation: "worktree"`, even one working in another clone, and its brief says to use absolute paths: a failed `cd` runs git wherever the agent stands.
+- Every subagent gets `isolation: "worktree"`, even one working in another clone, and its brief says to use absolute paths and `git -C`, one command at a time: a failed `cd` runs git wherever the agent stands, and the isolation hook can refuse a chained command in another clone.
 - Every brief says to repeat the report as the final message, and you copy that to the notes folder, since a subagent's write there can be refused.
-- Expect the launch cap (Token budget) to bite long before the reset, and count what's running against it as well as what you launch: running agents keep spending after it.
-- When the cap stops you, start a background timer that ends just after the reset, since its exit wakes the session. On waking, read `get_usage`, resume by SendMessage any agent the limit stopped, and launch what waited. The quiet gap is normal and costs nothing, so don't spend it on work that can wait.
+- Expect the launch cap (Token budget) to bite long before the reset, and count what's running against it as well as what you launch: allow about 15 points of the 5-hour window for each Opus builder still running.
+- When the cap stops you, start a background timer that ends just after the reset, since its exit wakes the session. On waking, read `get_usage`, resume by SendMessage any agent the limit stopped, and launch what waited. The quiet gap is normal and the wait spends nothing, though the wake re-reads the session once the cache has expired, so don't spend the last of a window on work that can wait.
+- Hand-overs need a session the owner can open, and the app may refuse to start one with nobody there. So past 50% context, keep this session small by giving reviews and fix rounds to subagents. At the 70% ceiling, let running agents report, finish the current step, write the note and the morning report, and stop.
 - Keep the resume note current at every milestone, with usage, the timer, and a record of where these rules didn't hold, which feeds the next change to them.
 
 **When the queue is done or they're back:** write `MORNING-REPORT.md` in the notes folder in plain language, and say the same in the closing message. Anything live and wrong comes first. Then each PR with its link, state, how to check it and which earlier PR's behaviour it changes; the decisions that need them, each with your recommendation; the choices on their veto list; what failed and what's unverified.
@@ -183,6 +186,6 @@ When the owner says they're going to sleep or will be away for hours and the wor
 - Commit as `Owen Yan <100368790+owenbonc@users.noreply.github.com>` (repo-local `git config`), with no Claude co-author trailers and no "Generated with Claude Code" footers: Owen is the sole credited author. Push with `git -c credential.helper='!gh auth git-credential' push` when plain https auth fails.
 - Never commit secrets, `.env`, local data, or personal content (CVs, emails, Notion pages). Fixtures are synthetic or trimmed public data.
 - Outward actions (pushing, posting, sending, writing to the owner's Notion or email) need the owner's go-ahead the first time in a project. Say what you'll do before doing it.
-- The owner's Notion: use the attached Notion connector (its `notion-*` tools); a second Notion MCP, such as makenotion's plugin, is the same hosted server again. Fetch a database's schema (`notion-fetch`) before writing a row, and use its exact property names and options. An app that reads Notion finds its databases by data source id and its properties by name, so never duplicate a database, rename a property or option, or move a database away from the page its integration is connected to without changing the app with it. Prefer trash (restorable for 30 days) to deletion, and back up before a bulk change.
 - A skill with its own repo has GitHub as its main copy, and Notion's is a read-only mirror: nobody edits it directly. Each merge updates the installed copy and Notion together, one way (`notion-upload-skill`, then download it and compare). A skill with no repo keeps Notion as main.
+- The owner's Notion: use the attached Notion connector (its `notion-*` tools); a second Notion MCP, such as makenotion's plugin, is the same hosted server again. Fetch a database's schema (`notion-fetch`) before writing a row, and use its exact property names and options. An app that reads Notion finds its databases by data source id and its properties by name, so never duplicate a database, rename a property or option, or move a database away from the page its integration is connected to without changing the app with it. Prefer trash (restorable for 30 days) to deletion, and back up before a bulk change.
 - Keep the owner posted in short status lines while agents run, and never predict an agent's result before its report arrives.
