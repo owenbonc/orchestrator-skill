@@ -372,7 +372,7 @@ describe('an apply across every case', () => {
 
 describe('ignored files', () => {
   const folders = ['node_modules', '.next', 'dist', 'build', 'out', '.turbo', '.cache', '.vite', 'coverage', 'test-results', 'playwright-report', '__pycache__'];
-  const files = ['app.tsbuildinfo', '.DS_Store', 'hook.cache.json'];
+  const files = ['app.tsbuildinfo', '.DS_Store', 'hook.cache.json', 'next-env.d.ts'];
   let repo;
   let dry;
   let result;

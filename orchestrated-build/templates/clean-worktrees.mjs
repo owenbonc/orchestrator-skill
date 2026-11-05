@@ -136,6 +136,7 @@ const REGENERABLE = new Set([
   '__pycache__',
   '.DS_Store',
   'hook.cache.json',
+  'next-env.d.ts',
 ]);
 const regenerable = (file) => REGENERABLE.has(path.basename(file)) || file.endsWith('.tsbuildinfo');
 const UNFINISHED = ['rebase-merge', 'rebase-apply', 'MERGE_HEAD', 'BISECT_LOG', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'sequencer', 'index.lock'];
