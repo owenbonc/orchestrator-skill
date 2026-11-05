@@ -1,8 +1,7 @@
 #!/usr/bin/env node
-// Usage: node clean-worktrees.mjs [--apply --notes <dir>] [--port <n>] [--base <ref>]
 // Run from any checkout. Without --apply it fetches nothing and writes nothing, so it reads the base as last fetched.
 import { execFileSync } from 'node:child_process';
-import { constants, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync } from 'node:fs';
 import { connect } from 'node:net';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
@@ -28,6 +27,9 @@ try {
 const { apply, base, port } = options;
 if (apply && !options.notes) usage();
 if (port !== undefined && !(/^\d+$/.test(port) && Number(port) <= 65535)) usage();
+
+// A git hook's GIT_DIR would point every check at the hook's own worktree, not the one being judged.
+for (const name of execFileSync('git', ['rev-parse', '--local-env-vars'], { encoding: 'utf8' }).split('\n')) delete process.env[name];
 
 // --no-optional-locks: a plain status refreshes the index, and a dry run writes nothing.
 const git = (cwd, ...args) =>
@@ -63,7 +65,6 @@ function listWorktrees(cwd) {
       return {
         path: listed,
         real: real(listed),
-        head: fields.find((field) => field.startsWith('HEAD '))?.slice('HEAD '.length),
         locked: fields.find((field) => /^locked( |$)/.test(field)),
       };
     });
@@ -110,34 +111,75 @@ if (!succeeds(callerDir, 'rev-parse', '--verify', '--quiet', `${base}^{commit}`)
 }
 
 const copyPath = (wt, file) => path.join(notes, path.basename(wt.path), file);
+const REGENERABLE = new Set([
+  'node_modules',
+  '.next',
+  'dist',
+  'build',
+  'out',
+  '.turbo',
+  '.cache',
+  '.vite',
+  'coverage',
+  'test-results',
+  'playwright-report',
+  '__pycache__',
+  '.DS_Store',
+]);
+const regenerable = (file) => REGENERABLE.has(path.basename(file)) || file.endsWith('.tsbuildinfo');
+const PAUSED = ['rebase-merge', 'rebase-apply', 'MERGE_HEAD', 'BISECT_LOG', 'CHERRY_PICK_HEAD', 'REVERT_HEAD'];
+const gitPath = (wt, name) => path.resolve(wt.real, git(wt.real, 'rev-parse', '--git-path', name).trim());
 
-/** The untracked files to save before removing this worktree; throws why it stays instead. */
-function assess(wt) {
+function untrackedToMoveOrThrowWhyItStays(wt) {
   if (wt.real === caller) throw new Error('it is the checkout this ran from');
   if (!existsSync(wt.real)) throw new Error('its folder is gone');
   if (wt.locked) throw new Error(`it is ${wt.locked}`);
-  const short = wt.head.slice(0, 7);
-  if (!succeeds(callerDir, 'merge-base', '--is-ancestor', wt.head, base)) throw new Error(`HEAD ${short} is not in ${base}`);
+  const head = git(wt.real, 'rev-parse', 'HEAD').trim();
+  const short = head.slice(0, 7);
+  if (!succeeds(callerDir, 'merge-base', '--is-ancestor', head, base)) throw new Error(`HEAD ${short} is not in ${base}`);
   // shortcut: a branch deleted on the remote still counts until a prune; ask the remote itself if local bases become routine.
-  if (!git(callerDir, 'for-each-ref', '--count=1', '--contains', wt.head, 'refs/remotes/origin').trim()) {
+  if (!git(callerDir, 'for-each-ref', '--count=1', '--contains', head, 'refs/remotes/origin').trim()) {
     throw new Error(`HEAD ${short} is not on origin`);
+  }
+  for (const state of PAUSED) {
+    if (existsSync(gitPath(wt, state))) throw new Error(`${state} says an operation is paused there`);
+  }
+  if (existsSync(gitPath(wt, 'modules'))) throw new Error('it holds submodules, which git refuses to remove');
+  // A branch's own reflog outlives the worktree; a detached HEAD's dies with it.
+  if (!succeeds(wt.real, 'symbolic-ref', '-q', 'HEAD')) {
+    const visited = git(wt.real, 'log', '-g', '--format=%H', 'HEAD').split('\n').filter(Boolean);
+    const orphan = git(wt.real, 'rev-list', '--max-count=1', ...visited, '--not', '--all').trim();
+    if (orphan) throw new Error(`its HEAD reflog holds ${orphan.slice(0, 7)}, which no ref reaches`);
   }
   const status = git(wt.real, 'status', '--porcelain', '-z', '--untracked-files=all')
     .split('\0')
     .filter(Boolean);
-  const untracked = status.filter((entry) => entry.startsWith('?? ')).map((entry) => entry.slice(3));
-  if (untracked.length < status.length) throw new Error('a tracked file is modified or staged');
+  if (status.some((entry) => !entry.startsWith('?? '))) throw new Error('a tracked file is modified or staged');
+  // A dry run leaves an inner worktree it judged gone on disk, where it still shows as untracked.
+  const untracked = status.map((entry) => entry.slice(3)).filter((file) => !gone.has(path.resolve(wt.real, file)));
+  const hidden = git(wt.real, 'ls-files', '-v', '-z').split('\0').find((entry) => entry && !entry.startsWith('H '));
+  if (hidden) throw new Error(`${hidden.slice(2)} is flagged so git hides its edits`);
   // git's own removal would take these with the worktree when they sit in an ignored folder.
-  if (linked.some((other) => other !== wt && inside(other.real, wt.real) && existsSync(other.real))) {
+  if (linked.some((other) => other !== wt && !gone.has(other.real) && inside(other.real, wt.real) && existsSync(other.real))) {
     throw new Error('another worktree is inside it');
   }
   if (notes && inside(notes, wt.real)) throw new Error('the notes folder is inside it');
+  const ignored = git(wt.real, 'ls-files', '-oi', '--exclude-standard', '--directory', '-z').split('\0').filter(Boolean);
+  // git also lists an untracked folder holding only ignored paths, beside those paths.
+  const parents = new Set(ignored.map((file) => `${path.dirname(file)}/`));
+  const lost = ignored.find(
+    (file) => !parents.has(file) && !regenerable(file) && !lstatSync(path.join(wt.real, file)).isSymbolicLink(),
+  );
+  if (lost) throw new Error(`ignored ${lost} is not regenerable`);
   for (const file of untracked) {
     const original = path.join(wt.real, file);
-    if (!lstatSync(original).isFile()) throw new Error(`untracked ${file} is not a plain file`);
+    const stat = lstatSync(original);
+    if (!stat.isFile()) throw new Error(`untracked ${file} is not a plain file`);
     if (!notes) continue;
     const copy = copyPath(wt, file);
+    if (inside(real(path.dirname(copy)), wt.real)) throw new Error(`the copy of ${file} would sit inside it`);
     const existing = lstatSync(copy, { throwIfNoEntry: false });
+    if (existing?.ino === stat.ino && existing.dev === stat.dev) throw new Error(`${copy} is ${file} itself`);
     if (existing && !(existing.isFile() && sameBytes(original, copy))) {
       throw new Error(`${copy} already exists with different content`);
     }
@@ -152,15 +194,18 @@ function assess(wt) {
 
 function moveToNotes(wt, files) {
   for (const file of files) {
+    const original = path.join(wt.real, file);
     const copy = copyPath(wt, file);
+    if (existsSync(copy)) continue;
     mkdirSync(path.dirname(copy), { recursive: true });
-    if (!existsSync(copy)) copyFileSync(path.join(wt.real, file), copy, constants.COPYFILE_EXCL);
-  }
-  for (const file of files) {
-    if (!sameBytes(path.join(wt.real, file), copyPath(wt, file))) throw new Error(`the copy of ${file} differs from it`);
+    // Renamed into place, so a run killed mid-copy leaves no stub at the copy's name to refuse on later.
+    const partial = `${copy}.${process.pid}.partial`;
+    copyFileSync(original, partial);
+    if (!sameBytes(original, partial)) throw new Error(`the copy of ${file} differs from it`);
+    renameSync(partial, copy);
   }
   for (const file of files) rmSync(path.join(wt.real, file));
-  if (files.length > 0) say(`moved ${files.length} untracked from ${wt.path} to ${path.dirname(copyPath(wt, 'file'))}`);
+  if (files.length > 0) say(`moved ${files.length} untracked from ${wt.path} to ${copyPath(wt, '')}`);
 }
 
 const portAnswers = () =>
@@ -177,13 +222,11 @@ const portAnswers = () =>
   });
 
 say(`stayed ${main.path}: it is the main checkout`);
-let gone = 0;
+const gone = new Set();
 let stayed = 1;
-// Deepest first, so a worktree inside another goes before the one that holds it.
 for (const wt of [...linked].sort((a, b) => b.real.length - a.real.length)) {
-  // Anything thrown keeps the worktree, so a refusal and a failed command end the same way.
   try {
-    const untracked = assess(wt);
+    const untracked = untrackedToMoveOrThrowWhyItStays(wt);
     if (apply) {
       moveToNotes(wt, untracked);
       git(callerDir, 'worktree', 'remove', wt.path);
@@ -191,13 +234,13 @@ for (const wt of [...linked].sort((a, b) => b.real.length - a.real.length)) {
     } else {
       say(`would remove ${wt.path}${untracked.length > 0 ? ` (moving ${untracked.length} untracked to the notes first)` : ''}`);
     }
-    gone += 1;
+    gone.add(wt.real);
   } catch (error) {
     stayed += 1;
     say(`stayed ${wt.path}: ${(error.stderr || error.message).trim().split('\n')[0]}`);
   }
 }
-say(`${apply ? 'Removed' : 'Would remove'} ${gone}; ${stayed} stayed.`);
+say(`${apply ? 'Removed' : 'Would remove'} ${gone.size}; ${stayed} stayed.`);
 
 let healthy = true;
 function alarm(message) {
