@@ -14,6 +14,7 @@ import {
   readdirSync,
   readlinkSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   utimesSync,
@@ -161,6 +162,7 @@ describe('an apply across every case', () => {
   let notesAfterFirst;
   let branchesBefore;
   let gitLog;
+  let copiedInode;
   const wt = {};
 
   before(() => {
@@ -227,7 +229,7 @@ describe('an apply across every case', () => {
 
     wt['already-copied'] = addWorktree(repo, 'already-copied');
     write(wt['already-copied'], 'report.md');
-    write(path.join(repo.notes, 'already-copied'), 'report.md');
+    copiedInode = lstatSync(write(path.join(repo.notes, 'already-copied'), 'report.md')).ino;
 
     wt.ignored = addWorktree(repo, 'ignored');
     write(wt.ignored, 'node_modules/pkg/index.js');
@@ -332,6 +334,7 @@ describe('an apply across every case', () => {
   it('counts an identical file already in the notes as copied', () => {
     assertRemoved(result, wt['already-copied']);
     assertFile(path.join(repo.notes, 'already-copied/report.md'));
+    assert.equal(lstatSync(path.join(repo.notes, 'already-copied/report.md')).ino, copiedInode, 'it was copied again');
   });
 
   it('lets regenerable ignored files and links go with the worktree, uncopied, without following links', () => {
@@ -369,7 +372,7 @@ describe('an apply across every case', () => {
 
 describe('ignored files', () => {
   const folders = ['node_modules', '.next', 'dist', 'build', 'out', '.turbo', '.cache', '.vite', 'coverage', 'test-results', 'playwright-report', '__pycache__'];
-  const files = ['app.tsbuildinfo', '.DS_Store'];
+  const files = ['app.tsbuildinfo', '.DS_Store', 'hook.cache.json'];
   let repo;
   let dry;
   let result;
@@ -403,6 +406,17 @@ describe('ignored files', () => {
     write(wt.lookalike, 'distribution/file');
     wt.suffix = addWorktree(repo, 'suffix');
     write(wt.suffix, 'app.tsbuildinfo.bak');
+    wt.regenClone = addWorktree(repo, 'regen-clone');
+    git(repo.root, 'clone', '-q', repo.origin, path.join(wt.regenClone, 'build/deep/tool'));
+    commit(path.join(wt.regenClone, 'build/deep/tool'));
+    wt.movedIn = addWorktree(repo, 'moved-in');
+    write(wt.movedIn, 'pkg/node_modules/inner/.git', 'gitdir: /a/worktree/moved/here\n');
+    wt.linkedRepo = addWorktree(repo, 'linked-repo');
+    write(wt.linkedRepo, 'node_modules/pkg/index.js');
+    symlinkSync(repo.main, path.join(wt.linkedRepo, 'node_modules/linked'));
+    wt.dataOut = addWorktree(repo, 'data-out');
+    write(wt.dataOut, 'results/out/results.csv');
+    write(wt.dataOut, '.DS_Store');
 
     dry = run(repo);
     result = apply(repo);
@@ -432,10 +446,34 @@ describe('ignored files', () => {
       assert.equal(existsSync(path.join(repo.notes, name)), false);
     });
   }
+
+  for (const [what, name, folder, inner] of [
+    ['a clone with an unpushed commit', 'regenClone', 'build/', 'build/deep/tool/.git'],
+    ['a worktree moved in, by its .git file', 'movedIn', 'pkg/node_modules/', 'pkg/node_modules/inner/.git'],
+  ]) {
+    it(`keeps a worktree whose regenerable folder holds ${what}, naming it in both modes`, () => {
+      const why = new RegExp(`: ignored ${folder} holds ${inner.replaceAll('.', '\\.')}$`);
+      assert.match(lineFor(dry, 'stayed', wt[name]) ?? '', why, dry.stdout);
+      assertStayed(result, wt[name], why);
+    });
+  }
+
+  it('does not follow a link in a regenerable folder to a repository', () => {
+    assert.ok(lineFor(dry, 'would remove', wt.linkedRepo), dry.stdout);
+    assertRemoved(result, wt.linkedRepo);
+    assertFile(path.join(repo.main, 'tracked.txt'), 'tracked\n');
+  });
+
+  it('prints the ignored entries that go with a worktree, on one line, in both modes', () => {
+    const lines = ({ stdout }) => stdout.split('\n');
+    assert.ok(lines(dry).includes(`would drop ignored from ${wt.dataOut}: .DS_Store, results/out/`), dry.stdout);
+    assert.ok(lines(result).includes(`dropped ignored from ${wt.dataOut}: .DS_Store, results/out/`), result.stdout);
+    assertRemoved(result, wt.dataOut);
+  });
 });
 
 describe('a paused or hidden state', () => {
-  // The worktrees sit on main, where tracked.txt holds y; side holds z, on a commit no base holds.
+  // The worktrees sit on main, where tracked.txt holds y; side holds z then w, on commits no base holds.
   const attempt = (cwd, ...args) => spawnSync('git', args, { cwd, env, encoding: 'utf8' });
   const edit = (dir, content) => {
     write(dir, 'tracked.txt', content);
@@ -444,14 +482,35 @@ describe('a paused or hidden state', () => {
   const pauses = {
     'a rebase stopped at an edit': ['rebase-merge', (wt) => attempt(wt, '-c', 'sequence.editor=sed -i.bak 1s/pick/edit/', 'rebase', '-i', 'HEAD~1')],
     'a failed git am, holding its patch': ['rebase-apply', (wt, repo) => attempt(wt, 'am', path.join(repo.root, 'z.patch'))],
-    'a merge': ['MERGE_HEAD', (wt) => attempt(wt, 'merge', 'side')],
+    'a merge with no conflict': ['MERGE_HEAD', (wt) => attempt(wt, 'merge', '--no-commit', '-s', 'ours', 'side')],
     'a bisect': ['BISECT_LOG', (wt) => attempt(wt, 'bisect', 'start')],
-    'a cherry-pick': ['CHERRY_PICK_HEAD', (wt) => attempt(wt, 'cherry-pick', 'side')],
-    'a revert': ['REVERT_HEAD', (wt) => attempt(wt, 'revert', '--no-edit', 'HEAD~1')],
+    'a cherry-pick with no conflict': ['CHERRY_PICK_HEAD', (wt) => attempt(wt, 'cherry-pick', 'HEAD')],
+    'a revert with no conflict left': [
+      'REVERT_HEAD',
+      (wt) => {
+        attempt(wt, 'revert', '--no-edit', 'HEAD~1');
+        attempt(wt, 'checkout', 'HEAD', '--', 'tracked.txt');
+      },
+    ],
+    'a series down to its todo': [
+      'sequencer',
+      (wt) => {
+        attempt(wt, 'cherry-pick', 'side~1', 'side');
+        attempt(wt, 'reset', '-q', '--hard');
+      },
+    ],
+    'a held index lock': ['index.lock', (wt) => writeFileSync(path.resolve(wt, git(wt, 'rev-parse', '--git-path', 'index.lock')), '')],
+  };
+  const commitDetached = (dir, file) => {
+    git(dir, 'checkout', '-q', '--detach');
+    commit(dir, file);
+    return git(dir, 'rev-parse', 'HEAD');
   };
   let repo;
   let result;
   let lostCommit;
+  let cameBackCommit;
+  let worktreeRefCommit;
   const wt = {};
 
   before(() => {
@@ -459,6 +518,7 @@ describe('a paused or hidden state', () => {
     wt.side = addWorktree(repo, 'side');
     edit(wt.side, 'z\n');
     write(repo.root, 'z.patch', git(wt.side, 'format-patch', '-1', '--stdout'));
+    edit(wt.side, 'w\n');
     edit(repo.main, 'x\n');
     edit(repo.main, 'y\n');
     git(repo.main, 'push', '-q', 'origin', 'main');
@@ -470,20 +530,44 @@ describe('a paused or hidden state', () => {
     }
 
     wt.movedAway = addWorktree(repo, 'moved-away');
-    git(wt.movedAway, 'checkout', '-q', '--detach');
-    commit(wt.movedAway, 'lost.txt');
-    lostCommit = git(wt.movedAway, 'rev-parse', 'HEAD');
+    lostCommit = commitDetached(wt.movedAway, 'lost.txt');
     git(wt.movedAway, 'checkout', '-q', '--detach', 'origin/main');
 
+    wt.cameBack = addWorktree(repo, 'came-back');
+    cameBackCommit = commitDetached(wt.cameBack, 'came-back.txt');
+    git(wt.cameBack, 'checkout', '-q', 'came-back');
+
+    wt.worktreeRef = addWorktree(repo, 'worktree-ref');
+    worktreeRefCommit = commitDetached(wt.worktreeRef, 'worktree-ref.txt');
+    git(wt.worktreeRef, 'update-ref', 'refs/worktree/keep', 'HEAD');
+    git(wt.worktreeRef, 'checkout', '-q', 'worktree-ref');
+
+    // Its reflog deleted, so only the branch itself reaches the commit.
     wt.movedAwayKept = addWorktree(repo, 'moved-away-kept');
-    git(wt.movedAwayKept, 'checkout', '-q', '--detach');
-    commit(wt.movedAwayKept);
+    commitDetached(wt.movedAwayKept);
     git(wt.movedAwayKept, 'branch', 'keeps-it');
+    rmSync(path.join(repo.main, '.git/logs/refs/heads/keeps-it'));
     git(wt.movedAwayKept, 'checkout', '-q', '--detach', 'origin/main');
+
+    wt.tagged = addWorktree(repo, 'tagged');
+    commitDetached(wt.tagged, 'tagged.txt');
+    git(wt.tagged, 'tag', 'keeps-it');
+    git(wt.tagged, 'checkout', '-q', 'tagged');
+
+    wt.pushed = addWorktree(repo, 'pushed');
+    commitDetached(wt.pushed, 'pushed.txt');
+    git(wt.pushed, 'push', '-q', 'origin', 'HEAD:refs/heads/elsewhere');
+    git(wt.pushed, 'checkout', '-q', 'pushed');
 
     wt.resetAway = addWorktree(repo, 'reset-away');
     commit(wt.resetAway, 'reset.txt');
     git(wt.resetAway, 'reset', '-q', '--hard', 'origin/main');
+
+    wt.rebased = addWorktree(repo, 'rebased', 'origin/main~1');
+    commit(wt.rebased, 'rebased-1.txt');
+    commit(wt.rebased, 'rebased-2.txt');
+    git(wt.rebased, 'rebase', '-q', 'origin/main');
+    git(wt.rebased, 'reset', '-q', '--hard', 'origin/main');
 
     wt.skipWorktree = addWorktree(repo, 'skip-worktree');
     git(wt.skipWorktree, 'update-index', '--skip-worktree', 'tracked.txt');
@@ -498,21 +582,41 @@ describe('a paused or hidden state', () => {
 
   for (const [name, [state]] of Object.entries(pauses)) {
     it(`keeps a worktree with ${name}, moving nothing`, () => {
-      assertStayed(result, wt[name], new RegExp(`: ${state} says an operation is paused there$`));
+      assertStayed(result, wt[name], new RegExp(`: ${state} says an operation is unfinished there$`));
       assertFile(path.join(wt[name], 'report.md'));
     });
   }
 
-  it('keeps a detached worktree that moved away from a commit no ref reaches', () => {
-    assertStayed(result, wt.movedAway, new RegExp(`its HEAD reflog holds ${lostCommit.slice(0, 7)}, which no ref reaches`));
+  const orphan = (hash) => new RegExp(`: its HEAD reflog holds ${hash.slice(0, 7)}, which no branch, tag or remote reaches$`);
+
+  it('keeps a detached worktree that moved away from a commit nothing else holds', () => {
+    assertStayed(result, wt.movedAway, orphan(lostCommit));
   });
 
-  it('removes a detached worktree whose moved-away commit a branch still reaches', () => {
-    assertRemoved(result, wt.movedAwayKept);
+  it('keeps a branch worktree that went detached, committed and came back', () => {
+    assertStayed(result, wt.cameBack, orphan(cameBackCommit));
   });
+
+  it('keeps a worktree whose commit only its own refs/worktree ref reaches, which dies with it', () => {
+    assertStayed(result, wt.worktreeRef, orphan(worktreeRefCommit));
+  });
+
+  for (const [what, name] of [
+    ['a branch', 'movedAwayKept'],
+    ['a tag', 'tagged'],
+    ['a remote branch', 'pushed'],
+  ]) {
+    it(`removes a worktree whose moved-away commit ${what} still reaches`, () => {
+      assertRemoved(result, wt[name]);
+    });
+  }
 
   it('removes a branch worktree that reset a commit away, since the branch reflog outlives it', () => {
     assertRemoved(result, wt.resetAway);
+  });
+
+  it('removes a branch worktree that rebased and reset away, whose every commit a branch reflog entry reaches', () => {
+    assertRemoved(result, wt.rebased);
   });
 
   for (const [flag, name] of [
@@ -568,6 +672,7 @@ describe('a dry run', () => {
     assert.ok(lineFor(result, 'stayed', wt.unmerged)?.includes('is not in origin/main'), result.stdout);
     assert.ok(lineFor(result, 'stayed', wt.conflict)?.includes('already exists with different content'), result.stdout);
     assert.ok(existsSync(wt.clean));
+    assert.doesNotMatch(result.stdout, /^would drop /m);
   });
 
   it('creates no notes folder when the one named does not exist', () => {
@@ -601,6 +706,8 @@ describe('a dry run', () => {
     assert.deepEqual(paths(dry, 'stayed'), paths(done, 'stayed'));
     assert.ok(lineFor(dry, 'stayed', held)?.includes('another worktree is inside it'), dry.stdout);
     assert.match(dry.stdout, /^Would remove 4; 3 stayed\.$/m);
+    assert.ok(dry.stdout.split('\n').includes(`would drop ignored from ${inIgnored[0]}: build/`), dry.stdout);
+    assert.ok(done.stdout.split('\n').includes(`dropped ignored from ${inIgnored[0]}: build/`), done.stdout);
   });
 });
 
@@ -629,6 +736,29 @@ describe('arguments', () => {
       assert.equal(result.status, 64);
     }
     assert.ok(existsSync(wt));
+  });
+
+  it('refuses --notes inside any listed worktree at the start, in both modes, removing nothing', () => {
+    const repo = makeRepo();
+    const wt = addWorktree(repo, 'clean');
+    write(wt, 'report.md');
+    const link = path.join(repo.root, 'link');
+    symlinkSync(wt, link);
+    for (const [notes, holder] of [
+      [path.join(wt, 'build/notes'), wt],
+      [path.join(link, 'build/notes'), wt],
+      [path.join(repo.main, 'build/notes'), repo.main],
+      [path.join(repo.main, '.git/worktrees/clean/notes'), repo.main],
+    ]) {
+      for (const args of [['--notes', notes], ['--apply', '--notes', notes]]) {
+        const result = run(repo, args);
+        assert.equal(result.status, 1, result.stdout);
+        assert.equal(result.stdout, '');
+        assert.ok(result.stderr.includes(`is inside the checkout ${holder}, so nothing was removed`), result.stderr);
+        assert.equal(existsSync(notes), false);
+      }
+    }
+    assertFile(path.join(wt, 'report.md'));
   });
 
   it('refuses a base that does not exist, removing nothing', () => {
@@ -786,7 +916,7 @@ describe('copying', () => {
     const wt = addWorktree(repo, 'at-parent');
     write(wt, 'report.md');
     const result = run(repo, ['--apply', '--notes', repo.wts]);
-    assertStayed(result, wt, /the copy of report\.md would sit inside it/);
+    assertStayed(result, wt, /the copy of report\.md would sit inside .*\/at-parent$/);
     assert.doesNotMatch(result.stdout, /^moved /m);
     assertFile(path.join(wt, 'report.md'));
   });
@@ -798,8 +928,41 @@ describe('copying', () => {
     mkdirSync(repo.notes);
     symlinkSync(wt, path.join(repo.notes, 'linked-back'));
     const result = apply(repo);
-    assertStayed(result, wt, /the copy of report\.md would sit inside it/);
+    assertStayed(result, wt, /the copy of report\.md would sit inside .*\/linked-back$/);
     assertFile(path.join(wt, 'report.md'));
+  });
+
+  it('keeps a worktree whose folder in the notes links into another listed worktree', () => {
+    const repo = makeRepo();
+    const holders = { 'into-linked': addWorktree(repo, 'holder'), 'into-main': repo.main };
+    mkdirSync(repo.notes);
+    for (const [name, holder] of Object.entries(holders)) {
+      const wt = addWorktree(repo, name);
+      write(wt, 'report.md');
+      mkdirSync(path.join(holder, 'build'));
+      symlinkSync(path.join(holder, 'build'), path.join(repo.notes, name));
+    }
+    const result = apply(repo);
+    for (const [name, holder] of Object.entries(holders)) {
+      assertStayed(result, path.join(repo.wts, name), new RegExp(`the copy of report\\.md would sit inside ${holder}$`));
+      assertFile(path.join(repo.wts, name, 'report.md'));
+    }
+  });
+
+  it('keeps a worktree when a different copy appears after it was judged, as another letter case does on a case-insensitive notes volume', () => {
+    const repo = makeRepo();
+    const wt = addWorktree(repo, 'raced');
+    write(wt, 'a.txt');
+    write(wt, 'report.md');
+    const copy = path.join(repo.notes, 'raced/report.md');
+    // lsof is the judging's last step, so this lands between the checks and the move.
+    const lsof = `mkdir -p "${path.dirname(copy)}"\nprintf different > "${copy}"\nexec "${realLsof}" "$@"`;
+    const result = apply(repo, [], { extraEnv: { PATH: `${fakes(repo, { lsof })}:${env.PATH}` } });
+    assertStayed(result, wt, /already exists with different content/);
+    assert.doesNotMatch(result.stdout, /^moved /m);
+    assertFile(path.join(wt, 'a.txt'));
+    assertFile(path.join(wt, 'report.md'));
+    assertFile(copy, 'different');
   });
 
   it('keeps a worktree whose copy in the notes is a hard link to the original', () => {
@@ -896,25 +1059,82 @@ syncBuiltinESMExports();
     assertFile(path.join(wt, 'report.md'));
   });
 
-  it('keeps a worktree that holds the notes folder, which would go with it', () => {
-    const repo = makeRepo();
-    const wt = addWorktree(repo, 'holds-notes');
-    write(wt, 'report.md');
-    const result = run(repo, ['--apply', '--notes', path.join(wt, 'build/notes')]);
-    assertStayed(result, wt, /the notes folder is inside it/);
-    assertFile(path.join(wt, 'report.md'));
-  });
-
   it('reports a worktree git refuses to remove as stayed, with its report safe in the notes', () => {
     const repo = makeRepo();
     const wt = addWorktree(repo, 'refused');
     write(wt, 'report.md');
+    write(wt, 'build/out.txt');
     const body = `case "$*" in *"worktree remove"*) echo 'fatal: refused by the test' >&2; exit 128;; esac\nexec "${realGit}" "$@"`;
     const result = apply(repo, [], { extraEnv: { PATH: `${fakes(repo, { git: body })}:${env.PATH}` } });
     assertStayed(result, wt, /refused by the test/);
     assert.match(result.stdout, /^moved 1 untracked from .*refused to /m);
+    assert.doesNotMatch(result.stdout, /^dropped /m);
     assert.equal(result.status, 0, result.stderr);
     assertFile(path.join(repo.notes, 'refused/report.md'));
+  });
+});
+
+describe('a check that fails', () => {
+  for (const [what, scripts] of [
+    ['the reflog check', { git: `case "$*" in *" rev-list "*) echo 'fatal: refused by the test' >&2; exit 128;; esac\nexec "${realGit}" "$@"` }],
+    ['the search for a repository in an ignored folder', { find: "echo 'find: refused by the test' >&2; exit 1" }],
+  ]) {
+    it(`keeps the worktree when ${what} fails`, () => {
+      const repo = makeRepo();
+      const wt = addWorktree(repo, 'clean');
+      write(wt, 'build/out.txt');
+      assertStayed(apply(repo, [], { extraEnv: { PATH: `${fakes(repo, scripts)}:${env.PATH}` } }), wt, /refused by the test/);
+    });
+  }
+});
+
+describe('what git caches', () => {
+  // Each setup shows plain git fooled first, so a pass means the script read past the cache.
+  const past = new Date(Date.now() - 3_600_000);
+
+  it('sees a tracked edit a lying fsmonitor hook hides', () => {
+    const repo = makeRepo();
+    const wt = addWorktree(repo, 'fsmonitor');
+    git(repo.main, 'config', 'core.fsmonitor', path.join(fakes(repo, { hook: `printf '%s\\0' "$2"` }), 'hook'));
+    git(wt, 'status', '--porcelain');
+    write(wt, 'tracked.txt', 'edited\n');
+    assert.equal(git(wt, 'status', '--porcelain'), '');
+    assertStayed(apply(repo), wt, /a tracked file is modified or staged/);
+    assertFile(path.join(wt, 'tracked.txt'), 'edited\n');
+  });
+
+  it('sees a new file the untracked cache hides, writing nothing in a dry run', () => {
+    const repo = makeRepo();
+    const wt = addWorktree(repo, 'untracked-cache');
+    git(repo.main, 'config', 'core.untrackedCache', 'true');
+    git(repo.main, 'config', 'core.trustctime', 'false');
+    git(repo.main, 'config', 'status.showUntrackedFiles', 'all');
+    write(wt, 'sub/.env');
+    utimesSync(path.join(wt, 'sub'), past, past);
+    git(wt, 'status', '--porcelain');
+    renameSync(path.join(wt, 'sub/.env'), path.join(wt, 'sub/new.txt'));
+    utimesSync(path.join(wt, 'sub'), past, past);
+    assert.equal(git(wt, 'status', '--porcelain'), '');
+    const before = snapshot(repo.root);
+    run(repo);
+    assert.deepEqual(snapshot(repo.root), before);
+    assertRemoved(apply(repo), wt);
+    assertFile(path.join(repo.notes, 'untracked-cache/sub/new.txt'));
+  });
+
+  it('sees a same-size edit core.checkStat=minimal hides', () => {
+    const repo = makeRepo();
+    const wt = addWorktree(repo, 'check-stat');
+    git(repo.main, 'config', 'core.checkStat', 'minimal');
+    const file = path.join(wt, 'tracked.txt');
+    utimesSync(file, past, past);
+    git(wt, 'status', '--porcelain');
+    // Saved by a rename, as editors do: a new inode, which minimal ignores and default doesn't, even within a second.
+    renameSync(write(wt, 'tracked.new', 'TRACKED\n'), file);
+    utimesSync(file, past, past);
+    assert.equal(git(wt, 'status', '--porcelain'), '');
+    assertStayed(apply(repo), wt, /a tracked file is modified or staged/);
+    assertFile(file, 'TRACKED\n');
   });
 });
 

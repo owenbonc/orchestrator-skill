@@ -31,9 +31,13 @@ if (port !== undefined && !(/^\d+$/.test(port) && Number(port) <= 65535)) usage(
 // A git hook's GIT_DIR would point every check at the hook's own worktree, not the one being judged.
 for (const name of execFileSync('git', ['rev-parse', '--local-env-vars'], { encoding: 'utf8' }).split('\n')) delete process.env[name];
 
-// --no-optional-locks: a plain status refreshes the index, and a dry run writes nothing.
+// --no-optional-locks: a plain status refreshes the index, and a dry run writes nothing. The -c flags read past caches that can hide an edit.
 const git = (cwd, ...args) =>
-  execFileSync('git', ['--no-optional-locks', ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  execFileSync(
+    'git',
+    ['--no-optional-locks', '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false', '-c', 'core.checkStat=default', ...args],
+    { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+  );
 
 function succeeds(cwd, ...args) {
   try {
@@ -94,6 +98,12 @@ const [main, ...linked] = worktrees;
 const mainHead = git(main.real, 'rev-parse', 'HEAD').trim();
 const caller = git(callerDir, 'rev-parse', '--show-toplevel').trim();
 const notes = options.notes && real(options.notes);
+const worktreeHolding = (target) => worktrees.find((wt) => inside(target, wt.real));
+const notesHolder = notes && worktreeHolding(notes);
+if (notesHolder) {
+  process.stderr.write(`--notes ${notes} is inside the checkout ${notesHolder.path}, so nothing was removed.\n`);
+  process.exit(1);
+}
 
 if (apply) {
   try {
@@ -128,10 +138,10 @@ const REGENERABLE = new Set([
   'hook.cache.json',
 ]);
 const regenerable = (file) => REGENERABLE.has(path.basename(file)) || file.endsWith('.tsbuildinfo');
-const PAUSED = ['rebase-merge', 'rebase-apply', 'MERGE_HEAD', 'BISECT_LOG', 'CHERRY_PICK_HEAD', 'REVERT_HEAD'];
+const UNFINISHED = ['rebase-merge', 'rebase-apply', 'MERGE_HEAD', 'BISECT_LOG', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'sequencer', 'index.lock'];
 const gitPath = (wt, name) => path.resolve(wt.real, git(wt.real, 'rev-parse', '--git-path', name).trim());
 
-function untrackedToMoveOrThrowWhyItStays(wt) {
+function whatGoesOrThrowWhyItStays(wt) {
   if (wt.real === caller) throw new Error('it is the checkout this ran from');
   if (!existsSync(wt.real)) throw new Error('its folder is gone');
   if (wt.locked) throw new Error(`it is ${wt.locked}`);
@@ -142,43 +152,46 @@ function untrackedToMoveOrThrowWhyItStays(wt) {
   if (!git(callerDir, 'for-each-ref', '--count=1', '--contains', head, 'refs/remotes/origin').trim()) {
     throw new Error(`HEAD ${short} is not on origin`);
   }
-  for (const state of PAUSED) {
-    if (existsSync(gitPath(wt, state))) throw new Error(`${state} says an operation is paused there`);
+  for (const state of UNFINISHED) {
+    if (existsSync(gitPath(wt, state))) throw new Error(`${state} says an operation is unfinished there`);
   }
   if (existsSync(gitPath(wt, 'modules'))) throw new Error('it holds submodules, which git refuses to remove');
-  // A branch's own reflog outlives the worktree; a detached HEAD's dies with it.
-  if (!succeeds(wt.real, 'symbolic-ref', '-q', 'HEAD')) {
-    const visited = git(wt.real, 'log', '-g', '--format=%H', 'HEAD').split('\n').filter(Boolean);
-    const orphan = git(wt.real, 'rev-list', '--max-count=1', ...visited, '--not', '--all').trim();
-    if (orphan) throw new Error(`its HEAD reflog holds ${orphan.slice(0, 7)}, which no ref reaches`);
-  }
+  // A branch's reflog outlives the worktree; its HEAD reflog and refs/worktree/*, which --all would count, don't.
+  // shortcut: reflogs go on the command line, so past ARG_MAX git can't start and every worktree stays; use --stdin if that bites.
+  const reflog = (...refs) => git(wt.real, 'log', '-g', '--format=%H', ...refs).split('\n').filter(Boolean);
+  const reached = ['--branches', '--tags', '--remotes', ...reflog('--branches')];
+  const orphan = git(wt.real, 'rev-list', '--max-count=1', ...reflog('HEAD'), '--not', ...reached).trim();
+  if (orphan) throw new Error(`its HEAD reflog holds ${orphan.slice(0, 7)}, which no branch, tag or remote reaches`);
   const status = git(wt.real, 'status', '--porcelain', '-z', '--untracked-files=all')
     .split('\0')
     .filter(Boolean);
   if (status.some((entry) => !entry.startsWith('?? '))) throw new Error('a tracked file is modified or staged');
-  // A dry run leaves an inner worktree it judged gone on disk, where it still shows as untracked.
-  const untracked = status.map((entry) => entry.slice(3)).filter((file) => !gone.has(path.resolve(wt.real, file)));
+  const untracked = status.map((entry) => entry.slice(3)).filter((file) => !going.has(path.resolve(wt.real, file)));
   const hidden = git(wt.real, 'ls-files', '-v', '-z').split('\0').find((entry) => entry && !entry.startsWith('H '));
   if (hidden) throw new Error(`${hidden.slice(2)} is flagged so git hides its edits`);
   // git's own removal would take these with the worktree when they sit in an ignored folder.
-  if (linked.some((other) => other !== wt && !gone.has(other.real) && inside(other.real, wt.real) && existsSync(other.real))) {
+  if (linked.some((other) => other !== wt && !going.has(other.real) && inside(other.real, wt.real) && existsSync(other.real))) {
     throw new Error('another worktree is inside it');
   }
-  if (notes && inside(notes, wt.real)) throw new Error('the notes folder is inside it');
   const ignored = git(wt.real, 'ls-files', '-oi', '--exclude-standard', '--directory', '-z').split('\0').filter(Boolean);
   // git also lists an untracked folder holding only ignored paths, beside those paths.
   const parents = new Set(ignored.map((file) => `${path.dirname(file)}/`));
-  const lost = ignored.find(
-    (file) => !parents.has(file) && !regenerable(file) && !lstatSync(path.join(wt.real, file)).isSymbolicLink(),
-  );
+  const dropped = ignored.filter((file) => !parents.has(file));
+  const lost = dropped.find((file) => !regenerable(file) && !lstatSync(path.join(wt.real, file)).isSymbolicLink());
   if (lost) throw new Error(`ignored ${lost} is not regenerable`);
+  for (const file of dropped) {
+    const dotGits = execFileSync('find', [path.resolve(wt.real, file), '-name', '.git', '-print0'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    const repo = dotGits.split('\0').find((dotGit) => dotGit && !going.has(path.dirname(dotGit)));
+    if (repo) throw new Error(`ignored ${file} holds ${path.relative(wt.real, repo)}`);
+  }
   for (const file of untracked) {
     const original = path.join(wt.real, file);
     const stat = lstatSync(original);
     if (!stat.isFile()) throw new Error(`untracked ${file} is not a plain file`);
     if (!notes) continue;
     const copy = copyPath(wt, file);
-    if (inside(real(path.dirname(copy)), wt.real)) throw new Error(`the copy of ${file} would sit inside it`);
+    const holder = worktreeHolding(real(path.dirname(copy)));
+    if (holder) throw new Error(`the copy of ${file} would sit inside ${holder.path}`);
     const existing = lstatSync(copy, { throwIfNoEntry: false });
     if (existing?.ino === stat.ino && existing.dev === stat.dev) throw new Error(`${copy} is ${file} itself`);
     if (existing && !(existing.isFile() && sameBytes(original, copy))) {
@@ -190,14 +203,17 @@ function untrackedToMoveOrThrowWhyItStays(wt) {
   const cwds = processCwds();
   if (!cwds) throw new Error("can't tell whether a process is using it: lsof failed");
   if (cwds.some((cwd) => inside(cwd, wt.real))) throw new Error('a process has its cwd there');
-  return untracked;
+  return { untracked, dropped };
 }
 
 function moveToNotes(wt, files) {
   for (const file of files) {
     const original = path.join(wt.real, file);
     const copy = copyPath(wt, file);
-    if (existsSync(copy)) continue;
+    if (existsSync(copy)) {
+      if (!sameBytes(original, copy)) throw new Error(`${copy} already exists with different content`);
+      continue;
+    }
     mkdirSync(path.dirname(copy), { recursive: true });
     // Renamed into place, so a run killed mid-copy leaves no stub at the copy's name to refuse on later.
     const partial = `${copy}.${process.pid}.partial`;
@@ -223,11 +239,11 @@ const portAnswers = () =>
   });
 
 say(`stayed ${main.path}: it is the main checkout`);
-const gone = new Set();
+const going = new Set();
 let stayed = 1;
 for (const wt of [...linked].sort((a, b) => b.real.length - a.real.length)) {
   try {
-    const untracked = untrackedToMoveOrThrowWhyItStays(wt);
+    const { untracked, dropped } = whatGoesOrThrowWhyItStays(wt);
     if (apply) {
       moveToNotes(wt, untracked);
       git(callerDir, 'worktree', 'remove', wt.path);
@@ -235,13 +251,14 @@ for (const wt of [...linked].sort((a, b) => b.real.length - a.real.length)) {
     } else {
       say(`would remove ${wt.path}${untracked.length > 0 ? ` (moving ${untracked.length} untracked to the notes first)` : ''}`);
     }
-    gone.add(wt.real);
+    if (dropped.length > 0) say(`${apply ? 'dropped' : 'would drop'} ignored from ${wt.path}: ${dropped.join(', ')}`);
+    going.add(wt.real);
   } catch (error) {
     stayed += 1;
     say(`stayed ${wt.path}: ${(error.stderr || error.message).trim().split('\n')[0]}`);
   }
 }
-say(`${apply ? 'Removed' : 'Would remove'} ${gone.size}; ${stayed} stayed.`);
+say(`${apply ? 'Removed' : 'Would remove'} ${going.size}; ${stayed} stayed.`);
 
 let healthy = true;
 function alarm(message) {
