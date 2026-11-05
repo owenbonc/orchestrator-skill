@@ -8,7 +8,11 @@ The skill sizes each request first, then picks a track:
 
 ```mermaid
 flowchart TD
-    R[Request] --> S{Size it}
+    R[Request] --> PQ{Priority}
+    PQ -->|quality first, the default| QF[Stronger model when unsure, about four agents at once, fresh fix agents, full UI polish]
+    PQ -->|tokens first| TF[Cheaper model when unsure, about two agents at once, a builder takes its own fixes, UI audit only]
+    QF --> S{Size it}
+    TF --> S
     S -->|quick edit or question| D[Just do it]
     S -->|one theme| C[Change track]
     S -->|bug| B[Bug track]
@@ -22,7 +26,9 @@ flowchart TD
     A --> V
     C --> V
     B --> V
-    V[verify.sh prints READY, then deslop] --> BL[Blind review of comment-stripped code]
+    V[verify.sh prints READY, then deslop] --> NS{Tokens first with nothing safety-critical?}
+    NS -->|no| BL[Blind review of comment-stripped code]
+    NS -->|yes, one Sonnet pass| RV
     BL --> RV[Comment Sicko and ponytail-review on the real diff]
     RV --> MU[Mutation check of the safety guards]
     MU --> PR[PR with filled Review section]
